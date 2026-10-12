@@ -32,6 +32,13 @@ import io.github.dsheirer.console.activity.CardActivityState;
 public final class ConsoleCardColors
 {
     public static final int TEXT = 0x10233A;
+    /**
+     * Secondary card text (talkgroup, recent talkers, site, volume value) on idle cards (see console.css '.sub').
+     */
+    public static final int TEXT_SECONDARY_IDLE = 0x4A5868;
+    /**
+     * Secondary card text on active, muted, encrypted and hang cards (see console.css '.card.live .sub').
+     */
     public static final int TEXT_SECONDARY_ACTIVE = 0x1F2E3F;
     public static final int IDLE_FILL = 0xF5F7FA;
     public static final int IDLE_BORDER = 0xAEB7C2;

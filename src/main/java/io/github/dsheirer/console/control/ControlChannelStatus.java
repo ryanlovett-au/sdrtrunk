@@ -18,6 +18,8 @@
  */
 package io.github.dsheirer.console.control;
 
+import io.github.dsheirer.channel.state.State;
+
 /**
  * Immutable status of a running trunking control channel, for the console control channel strip.
  *
@@ -26,12 +28,11 @@ package io.github.dsheirer.console.control;
  * @param site configured site name, or null
  * @param frequency current frequency in Hertz, or 0 when unknown
  * @param decoder decoder type label (e.g. "P25 Phase 1")
- * @param state channel (decoder) state label (e.g. "CONTROL"), or null when unknown
- * @param locked true when the channel is in the control state (decoding the control channel)
+ * @param channelState channel (decoder) state, or null when unknown
  * @param detail decoded network details
  */
 public record ControlChannelStatus(String channelName, String system, String site, long frequency, String decoder,
-                                   String state, boolean locked, ControlChannelDetail detail)
+                                   State channelState, ControlChannelDetail detail)
 {
     /**
      * Constructs an instance
@@ -39,6 +40,14 @@ public record ControlChannelStatus(String channelName, String system, String sit
     public ControlChannelStatus
     {
         detail = detail != null ? detail : ControlChannelDetail.NONE;
+    }
+
+    /**
+     * Operator-friendly control channel state (e.g. LOCKED or SEARCHING).
+     */
+    public ControlChannelState getState()
+    {
+        return ControlChannelState.of(channelState);
     }
 
     /**

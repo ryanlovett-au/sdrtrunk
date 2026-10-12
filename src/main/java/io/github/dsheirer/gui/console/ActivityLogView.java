@@ -59,7 +59,7 @@ public class ActivityLogView extends TitledPane
         setExpanded(true);
 
         mTableView.getStyleClass().add("activity-table");
-        mTableView.setPrefHeight(210);
+        mTableView.setPrefHeight(280);
         mTableView.setMinHeight(80);
         mTableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
         mTableView.setPlaceholder(new Label("No console activity"));

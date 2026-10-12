@@ -170,7 +170,6 @@ public class ControlChannelMonitor
         }
 
         return new ControlChannelStatus(channel.getName(), channel.getSystem(), channel.getSite(), frequency,
-            channel.getDecodeConfiguration().getDecoderType().getShortDisplayString(),
-            state != null ? state.toString() : null, state == State.CONTROL, detail);
+            channel.getDecodeConfiguration().getDecoderType().getShortDisplayString(), state, detail);
     }
 }

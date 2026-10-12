@@ -134,6 +134,10 @@ public class ConsoleGroupView extends VBox
 
         mEditButtons.setVisible(editMode);
         mEditButtons.setManaged(editMode);
+
+        //The active call count is hidden while editing so that the group name has room next to the edit buttons
+        mActiveLabel.setVisible(!editMode);
+        mActiveLabel.setManaged(!editMode);
     }
 
     /**

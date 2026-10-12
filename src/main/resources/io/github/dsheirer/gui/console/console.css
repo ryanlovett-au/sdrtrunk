@@ -42,7 +42,6 @@
 }
 
 .console-header .label.console-clock {
-    -fx-font-family: "monospace";
     -fx-font-size: 26px;
     -fx-min-width: 140;
     -fx-alignment: center-right;
@@ -172,6 +171,10 @@
 
 .cc-dot.locked {
     -fx-background-color: #1E9E6E;
+}
+
+.cc-dot.stopped {
+    -fx-background-color: #8A96A3;
 }
 
 .cc-site {
@@ -485,8 +488,9 @@
     -fx-padding: 8;
 }
 
-.volume-value {
-    -fx-font-size: 11px;
+.console-root .card .label.volume-value {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
     -fx-min-width: 28;
     -fx-alignment: center-right;
 }
@@ -577,10 +581,6 @@
 .activity-table .table-cell {
     -fx-text-fill: #10233A;
     -fx-padding: 4 12 4 12;
-}
-
-.activity-table .table-cell.mono {
-    -fx-font-family: "monospace";
 }
 
 .activity-table .table-cell.log-talkgroup {

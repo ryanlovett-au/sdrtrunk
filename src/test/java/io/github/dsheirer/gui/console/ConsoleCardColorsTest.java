@@ -19,6 +19,7 @@
 package io.github.dsheirer.gui.console;
 
 import io.github.dsheirer.console.activity.CardActivityState;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static io.github.dsheirer.gui.console.ConsoleCardColors.VisualState;
@@ -55,6 +56,34 @@ public class ConsoleCardColorsTest
             int ink = ConsoleCardColors.getInkColor(base);
             assertTrue(ConsoleCardColors.contrastRatio(ink, ConsoleCardColors.WHITE) >= 4.5,
                 "Expected ink colour to have 4.5:1 contrast on white for " + ConsoleCardColors.toHex(aliasColor));
+        }
+    }
+
+    @Test
+    void secondaryTextKeepsContrastOnCardFills()
+    {
+        //Idle and unlinked cards use the idle secondary text colour, all other states the active secondary colour
+        for(VisualState state: List.of(VisualState.IDLE, VisualState.UNLINKED))
+        {
+            int fill = ConsoleCardColors.getPaint(ConsoleCardColors.getBaseColor(0, "card"), state).fill();
+            assertTrue(ConsoleCardColors.contrastRatio(fill, ConsoleCardColors.TEXT_SECONDARY_IDLE) >= 4.5,
+                "Expected 4.5:1 contrast for idle secondary text in state " + state);
+        }
+
+        for(int aliasColor: ALIAS_COLORS)
+        {
+            int base = ConsoleCardColors.getBaseColor(aliasColor, "card");
+
+            for(VisualState state: VisualState.values())
+            {
+                if(state.isLive())
+                {
+                    int fill = ConsoleCardColors.getPaint(base, state).fill();
+                    assertTrue(ConsoleCardColors.contrastRatio(fill, ConsoleCardColors.TEXT_SECONDARY_ACTIVE) >= 4.5,
+                        "Expected 4.5:1 contrast for secondary text in state " + state + " fill " +
+                            ConsoleCardColors.toHex(fill));
+                }
+            }
         }
     }
 

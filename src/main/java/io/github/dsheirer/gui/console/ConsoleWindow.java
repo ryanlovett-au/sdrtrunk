@@ -48,6 +48,7 @@ import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
+import javafx.beans.binding.Bindings;
 import javafx.collections.ListChangeListener;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -64,7 +65,6 @@ import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
-import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -243,12 +243,13 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         URL stylesheet = ConsoleWindow.class.getResource(STYLESHEET);
         mStylesheet = stylesheet != null ? stylesheet.toExternalForm() : null;
 
-        BorderPane root = new BorderPane();
-        root.getStyleClass().add("console-root");
-        root.setTop(new VBox(createHeader(), createControlChannelStrip()));
-        root.setCenter(createCenter());
+        //The groups area takes the vertical slack (and scrolls) when the groups are taller than the window, otherwise
+        //it is only as tall as the groups so that the activity log follows directly below the groups
+        ScrollPane groupsScrollPane = createCenter();
+        VBox.setVgrow(groupsScrollPane, Priority.ALWAYS);
         mActivityLogView = new ActivityLogView(this::getInkColor);
-        root.setBottom(mActivityLogView);
+        VBox root = new VBox(createHeader(), createControlChannelStrip(), groupsScrollPane, mActivityLogView);
+        root.getStyleClass().add("console-root");
 
         Scene scene = new Scene(root, 1280, 860);
 
@@ -259,6 +260,13 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         else
         {
             mLog.warn("Console stylesheet [" + STYLESHEET + "] not found");
+        }
+
+        String monospaceStylesheet = ConsoleFonts.getMonospaceStylesheet();
+
+        if(monospaceStylesheet != null)
+        {
+            scene.getStylesheets().add(monospaceStylesheet);
         }
 
         mStage = new Stage();
@@ -354,7 +362,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         settingsButton.getStyleClass().add("header-menu-button");
 
         mClockLabel = new Label();
-        mClockLabel.getStyleClass().add("console-clock");
+        mClockLabel.getStyleClass().addAll("console-clock", "mono");
         mClockLabel.setMinWidth(Region.USE_PREF_SIZE);
 
         for(Region control: List.of(mEditButton, mAddGroupButton, traditionalButton, mConsoleModeSwitch, settingsButton))
@@ -415,6 +423,9 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         scrollPane.getStyleClass().add("groups-scroll");
         scrollPane.setFitToWidth(true);
         scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scrollPane.setMinHeight(120);
+        scrollPane.maxHeightProperty().bind(Bindings.createDoubleBinding(() -> content.getHeight() +
+            scrollPane.snappedTopInset() + scrollPane.snappedBottomInset() + 2, content.heightProperty()));
         return scrollPane;
     }
 
