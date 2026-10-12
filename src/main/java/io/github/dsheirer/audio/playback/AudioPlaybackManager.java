@@ -61,6 +61,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
     private AudioPlaybackDeviceDescriptor mAudioPlaybackDevice;
     private AudioOutput mAudioOutput;
     private ScheduledFuture<?> mProcessingTask;
+    private volatile boolean mSuspended;
 
     /**
      * Constructs an instance.
@@ -114,6 +115,13 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
      */
     private void processAudioSegments()
     {
+        //While suspended, another audio engine owns the output device - release all audio segments.
+        if(mSuspended)
+        {
+            discardAudioSegments();
+            return;
+        }
+
         //Process new audio segments queue.  If segment has audio, queue it for replay, otherwise place in pending queue
         AudioSegment newSegment = mNewAudioSegmentQueue.poll();
 
@@ -195,7 +203,11 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
 
                         try
                         {
-                            for(AudioChannel audioOutput: mAudioOutput.getAudioProvider().getAudioChannels())
+                            //Output can be released by a concurrent suspend
+                            List<AudioChannel> audioChannels = mAudioOutput != null ?
+                                    mAudioOutput.getAudioProvider().getAudioChannels() : Collections.emptyList();
+
+                            for(AudioChannel audioOutput: audioChannels)
                             {
                                 if(audioOutput.isLinkedTo(audioSegment))
                                 {
@@ -220,8 +232,12 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
 
                 try
                 {
+                    //Output can be released by a concurrent suspend
+                    List<AudioChannel> audioChannels = mAudioOutput != null ?
+                            mAudioOutput.getAudioProvider().getAudioChannels() : Collections.emptyList();
+
                     //Assign empty audio outputs first
-                    for(AudioChannel audioChannel: mAudioOutput.getAudioProvider().getAudioChannels())
+                    for(AudioChannel audioChannel: audioChannels)
                     {
                         if(audioChannel.isEmpty())
                         {
@@ -253,6 +269,126 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                 }
             }
         }
+    }
+
+    /**
+     * Releases all queued and pending audio segments.
+     *
+     * Note: this method is intended to be invoked only by the scheduled processing thread.
+     */
+    private void discardAudioSegments()
+    {
+        AudioSegment audioSegment = mNewAudioSegmentQueue.poll();
+
+        while(audioSegment != null)
+        {
+            audioSegment.decrementConsumerCount();
+            audioSegment = mNewAudioSegmentQueue.poll();
+        }
+
+        for(AudioSegment pending: mPendingAudioSegments)
+        {
+            pending.decrementConsumerCount();
+        }
+
+        mPendingAudioSegments.clear();
+
+        for(AudioSegment queued: mAudioSegments)
+        {
+            queued.decrementConsumerCount();
+        }
+
+        mAudioSegments.clear();
+    }
+
+    /**
+     * Suspends or resumes audio playback.  While suspended, the audio output device is closed so that another audio
+     * engine (e.g. the console audio mixer) can own the device, and all received audio segments are released without
+     * being played.  Resuming reopens the playback device from the user preferences.
+     *
+     * @param suspended true to suspend or false to resume
+     */
+    public void setSuspended(boolean suspended)
+    {
+        if(suspended)
+        {
+            String deviceName = "None";
+
+            mAudioChannelsLock.lock();
+
+            try
+            {
+                if(mSuspended)
+                {
+                    return;
+                }
+
+                mSuspended = true;
+
+                if(mAudioOutput != null)
+                {
+                    deviceName = mAudioOutput.getAudioPlaybackDeviceDescriptor().getMixerInfo().getName();
+
+                    //Disable channels first so that queued audio segments are released.
+                    for(AudioChannel audioChannel: mAudioOutput.getAudioProvider().getAudioChannels())
+                    {
+                        audioChannel.setDisabled(true);
+                    }
+
+                    mAudioOutput.dispose();
+                    mAudioOutput = null;
+                }
+            }
+            finally
+            {
+                mAudioChannelsLock.unlock();
+            }
+
+            mControllerBroadcaster.broadcast(new AudioEvent(AudioEvent.Type.AUDIO_CONFIGURATION_CHANGE_STARTED,
+                    deviceName));
+            mControllerBroadcaster.broadcast(new AudioEvent(AudioEvent.Type.AUDIO_CONFIGURATION_CHANGE_COMPLETE,
+                    deviceName));
+        }
+        else
+        {
+            mAudioChannelsLock.lock();
+
+            try
+            {
+                if(!mSuspended)
+                {
+                    return;
+                }
+
+                mSuspended = false;
+            }
+            finally
+            {
+                mAudioChannelsLock.unlock();
+            }
+
+            AudioPlaybackDeviceDescriptor device = mUserPreferences.getPlaybackPreference().getAudioPlaybackDevice();
+
+            if(device != null)
+            {
+                try
+                {
+                    setAudioPlaybackDevice(device);
+                }
+                catch(AudioException ae)
+                {
+                    mLog.error("Error resuming audio playback with device [" + device + "]", ae);
+                }
+            }
+        }
+    }
+
+    /**
+     * Indicates if audio playback is suspended.
+     */
+    public boolean isSuspended()
+    {
+        return mSuspended;
     }
 
     public void dispose()
@@ -317,6 +453,12 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
     {
         if(audioDevice != null)
         {
+            //While suspended, the device is opened when playback resumes
+            if(mSuspended)
+            {
+                return;
+            }
+
             mControllerBroadcaster.broadcast(new AudioEvent(AudioEvent.Type.AUDIO_CONFIGURATION_CHANGE_STARTED,
                     audioDevice.getMixerInfo().getName()));
 
@@ -324,6 +466,12 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
 
             try
             {
+                //Re-check while holding the lock in case playback was suspended concurrently
+                if(mSuspended)
+                {
+                    return;
+                }
+
                 if(mAudioOutput != null)
                 {
                     mAudioOutput.dispose();

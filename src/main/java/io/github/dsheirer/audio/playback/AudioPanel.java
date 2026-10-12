@@ -293,8 +293,16 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
             setBorderPainted(false);
             getAccessibleContext().setAccessibleName("Mute");
             addActionListener(e -> {
+                AudioOutput audioOutput = mAudioPlaybackManager.getAudioOutput();
+
+                //Audio output is null while playback is suspended (e.g. console mode)
+                if(audioOutput == null)
+                {
+                    return;
+                }
+
                 mMuted = !mMuted;
-                mAudioPlaybackManager.getAudioOutput().setMuted(mMuted);
+                audioOutput.setMuted(mMuted);
                 EventQueue.invokeLater(() -> {
                     setIcon(mMuted ? MUTED_ICON : UNMUTED_ICON);
                     getAccessibleContext().setAccessibleName(mMuted ? "Unmute" : "Mute");

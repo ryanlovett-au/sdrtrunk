@@ -26,6 +26,7 @@ import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
 import io.github.dsheirer.audio.playback.AudioPlaybackManager;
 import io.github.dsheirer.console.ConsoleLayoutManager;
+import io.github.dsheirer.console.audio.ConsoleAudioMixer;
 import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelAutoStartFrame;
@@ -126,6 +127,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private ApplicationWindowRegistry mApplicationWindowRegistry;
     private BroadcastStatusPanel mBroadcastStatusPanel;
     private ConsoleLayoutManager mConsoleLayoutManager;
+    private ConsoleAudioMixer mConsoleAudioMixer;
     private ControllerPanel mControllerPanel;
     private DiagnosticMonitor mDiagnosticMonitor;
     private IconModel mIconModel = new IconModel();
@@ -223,6 +225,9 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(duplicateCallDetector);
         mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(audioPlaybackManager);
+        mConsoleAudioMixer = new ConsoleAudioMixer(mUserPreferences, mConsoleLayoutManager,
+            mPlaylistManager.getConsoleCardResolver(), audioPlaybackManager);
+        mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(mConsoleAudioMixer);
         mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(mAudioRecordingManager);
         mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(mAudioStreamingManager);
 
@@ -640,6 +645,7 @@ public class SDRTrunk implements Listener<TunerEvent>
             (mMainGui.getExtendedState() & JFrame.MAXIMIZED_BOTH) == JFrame.MAXIMIZED_BOTH);
         mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER, mSpectralPanel.getSize());
         mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER, mControllerPanel.getSize());
+        mConsoleAudioMixer.dispose();
         mConsoleLayoutManager.shutdown();
         mJavaFxWindowManager.shutdown();
         mLog.info("Stopping channels ...");
