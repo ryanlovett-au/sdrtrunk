@@ -32,9 +32,13 @@ import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
+import io.github.dsheirer.module.decode.network.DecodeQualityTracker;
+import io.github.dsheirer.module.decode.network.INetworkSiteInfoProvider;
+import io.github.dsheirer.module.decode.network.NetworkSiteInfo;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNLayer3Message;
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.ControlChannelInformation;
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.SiteInformation;
@@ -80,11 +84,19 @@ import java.util.List;
 /**
  * NXDN decoder state
  */
-public class NXDNDecoderState extends DecoderState
+public class NXDNDecoderState extends DecoderState implements INetworkSiteInfoProvider
 {
+    /**
+     * Airtime of each NXDN frame for the decode quality measure: 192 symbols (sync, LICH and payload).
+     */
+    public static final int AIRTIME_BITS_PER_FRAME = 384;
     private static final int IDLE_DURING_CALL_MAX_COUNT = 5;
     private final Channel mChannel;
     private final NXDNNetworkConfigurationMonitor mNetworkConfigurationMonitor = new NXDNNetworkConfigurationMonitor();
+    private final DecodeQualityTracker mDecodeQualityTracker = new DecodeQualityTracker();
+    private boolean mQualityFramePending;
+    private boolean mQualityFrameValid;
+    private long mQualityFrameTimestamp;
     private final NXDNTrafficChannelManager mTrafficChannelManager;
     private boolean mEncryptedCallStateDetermined = false;
     private boolean mEncryptedCall = false;
@@ -100,6 +112,57 @@ public class NXDNDecoderState extends DecoderState
     {
         mChannel = channel;
         mTrafficChannelManager = trafficChannelManager;
+    }
+
+    @Override
+    public NetworkSiteInfo getNetworkSiteInfo()
+    {
+        return mNetworkConfigurationMonitor.getNetworkSiteInfo();
+    }
+
+    @Override
+    public int getDecodeQuality()
+    {
+        return mDecodeQualityTracker.getQuality();
+    }
+
+    /**
+     * Updates the decode quality per frame: the messages of a frame share the frame timestamp and arrive together, so
+     * each frame is counted once (valid when any of its messages is valid) when the next frame or a sync loss arrives.
+     */
+    private void updateDecodeQuality(IMessage message)
+    {
+        if(message instanceof NXDNMessage nxdn)
+        {
+            if(mQualityFramePending && nxdn.getTimestamp() == mQualityFrameTimestamp)
+            {
+                mQualityFrameValid |= nxdn.isValid();
+            }
+            else
+            {
+                flushQualityFrame();
+                mQualityFramePending = true;
+                mQualityFrameTimestamp = nxdn.getTimestamp();
+                mQualityFrameValid = nxdn.isValid();
+            }
+        }
+        else if(message instanceof SyncLossMessage syncLoss)
+        {
+            flushQualityFrame();
+            mDecodeQualityTracker.syncLoss(syncLoss.getTimestamp(), syncLoss.getBitsProcessed());
+        }
+    }
+
+    /**
+     * Records the pending frame with the decode quality tracker.
+     */
+    private void flushQualityFrame()
+    {
+        if(mQualityFramePending)
+        {
+            mDecodeQualityTracker.message(mQualityFrameTimestamp, AIRTIME_BITS_PER_FRAME, mQualityFrameValid);
+            mQualityFramePending = false;
+        }
     }
 
     /**
@@ -140,6 +203,8 @@ public class NXDNDecoderState extends DecoderState
         {
             case REQUEST_RESET:
                 resetState();
+                mDecodeQualityTracker.reset();
+                mQualityFramePending = false;
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
                 setCurrentFrequency(event.getFrequency());
@@ -173,6 +238,8 @@ public class NXDNDecoderState extends DecoderState
     @Override
     public void receive(IMessage iMessage)
     {
+        updateDecodeQuality(iMessage);
+
         if(iMessage instanceof NXDNMessage nxdn && nxdn.isValid())
         {
             if(nxdn instanceof NXDNLayer3Message layer3)

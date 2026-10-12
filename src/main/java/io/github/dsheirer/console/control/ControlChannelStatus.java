@@ -51,18 +51,18 @@ public record ControlChannelStatus(String channelName, String system, String sit
     }
 
     /**
-     * Display name for the site: decoded site name, configured site name, system name or channel name.
+     * Display name for the site: configured site name, decoded site name, system name or channel name.
      */
     public String getSiteLabel()
     {
-        if(detail.siteName() != null && !detail.siteName().isBlank())
-        {
-            return detail.siteName();
-        }
-
         if(site != null && !site.isBlank())
         {
             return site;
+        }
+
+        if(detail.siteName() != null && !detail.siteName().isBlank())
+        {
+            return detail.siteName();
         }
 
         if(system != null && !system.isBlank())

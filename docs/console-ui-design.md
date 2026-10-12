@@ -77,14 +77,35 @@ Network configuration monitors ──► structured control channel snapshot ─
    (`gui.console`), decode event routing to cards with ACTIVE/ENCRYPTED/HANG/IDLE state, recent talkers and an
    activity log (`console.activity.ConsoleActivityRouter`), and a control channel strip from channel configuration and
    state (`console.control`, with `IControlChannelDetailProvider` as the phase 4 seam).
-4. **Control channel card:** structured snapshot from network configuration monitors.
-5. **Alias sheet editor (done, except drag rows onto console groups):** View → Alias Sheet. Inline edit, paste from
+4. **Control channel card (done):** each network configuration monitor (P25 P1/P2, DMR, NXDN) publishes an immutable
+   `NetworkSiteInfo` snapshot (`module.decode.network`: system/WACN, RFSS, site, NAC / color code / RAN, LRA, announced
+   control channel frequency, neighbor count) and the decoder states implement `INetworkSiteInfoProvider` (snapshot
+   plus decode quality). `console.control.NetworkSiteDetailProvider` finds them among the decoder states of the
+   channel's processing chain and fills the control strip chips (site, RFSS-site e.g. "1-3", NAC, frequency, quality or
+   state, details in the tooltip). Cards show the decoded site of the control channel that granted the call
+   (e.g. "North Hill · 1-3"), resolved by `ControlChannelMonitor` from the call's configured site/channel name.
+5. **Alias sheet editor (done):** View → Alias Sheet. Inline edit, paste from
    Excel/Sheets, fill-down, search/filter, CSV import/export, undo, duplicate/overlap highlighting, console group
    column (adds/moves/removes the alias's card). Built on a cell-selection `TableView` rather than ControlsFX
    `SpreadsheetView`: the SpreadsheetView skin needs a JavaFX internal package export
    (`com.sun.javafx.scene.control.behavior`) that the launchers don't provide, and its static grid model would have
    to be rebuilt on every alias change, sort and filter. Editing logic lives in `io.github.dsheirer.alias.sheet`
-   (testable without JavaFX controls). Independent of phases 1–3.
+   (testable without JavaFX controls). Independent of phases 1–3. Selected rows can be dragged (press on an already
+   selected cell and drag) onto a console group in the console window: one card per alias, cards in other groups are
+   moved (`console.ConsoleAliasDrop`, custom data format of alias UUIDs).
+
+## Decode quality
+
+The control strip shows a 0–100% decode quality per control channel (`module.decode.network.DecodeQualityTracker`):
+the share of the received bit stream (airtime) that decoded into valid (CRC/FEC passing) messages over a 10 second
+sliding window, i.e. valid bits / (valid + invalid + sync loss bits). The message framers already account for the whole
+stream: framed messages are delivered valid or not, and stretches without a sync are reported as `SyncLossMessage`s
+carrying the bits processed, so missed messages count against the quality (a simple valid/total message ratio would
+read 100% on a fading channel). Airtime per message: P25 phase 1 from the data unit ID's elapsed length (TSBK frame
+360 bits; each extra block of a multi-block frame 216/144 bits; assembled AMBTC/SNDCP messages are not counted);
+P25 phase 2 720 bits per I-ISCH (2 per 4-timeslot superframe fragment); DMR 288 bits per burst (honoring the ignore
+CRC setting); NXDN 384 bits per frame (a frame counts as valid when any of its messages is valid). Shown as "—" when
+unknown (no messages yet, or none for 3 seconds).
 
 ## Testing
 

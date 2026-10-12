@@ -41,13 +41,18 @@ import io.github.dsheirer.module.decode.dmr.message.data.lc.shorty.ControlChanne
 import io.github.dsheirer.module.decode.dmr.message.data.lc.shorty.TrafficChannelSystemParameters;
 import io.github.dsheirer.module.decode.dmr.message.type.Model;
 import io.github.dsheirer.module.decode.dmr.message.type.SystemIdentityCode;
+import io.github.dsheirer.module.decode.network.NetworkSiteInfo;
+import io.github.dsheirer.protocol.Protocol;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static io.github.dsheirer.module.decode.network.NetworkSiteInfo.toInteger;
 
 /**
  * Tracks the network configuration details of a DMR network from the broadcast messages
@@ -82,6 +87,9 @@ public class DMRNetworkConfigurationMonitor
     private DMRChannel mCurrentChannel;
     private Channel mChannel;
 
+    //Immutable snapshot of the network and site details, updated by the decoder thread and read by other threads
+    private volatile NetworkSiteInfo mNetworkSiteInfo;
+
     /**
      * Constructs an instance
      * @param channel configuration
@@ -97,6 +105,34 @@ public class DMRNetworkConfigurationMonitor
     public void setCurrentChannel(DMRChannel channel)
     {
         mCurrentChannel = channel;
+        updateNetworkSiteInfo();
+    }
+
+    /**
+     * Snapshot of the decoded network and site details.  Safe to invoke from any thread.
+     * @return snapshot, or null when no network, site or color code details have been decoded.
+     */
+    public NetworkSiteInfo getNetworkSiteInfo()
+    {
+        return mNetworkSiteInfo;
+    }
+
+    /**
+     * Updates the network and site details snapshot: the detected system type, network, site, color code (timeslot 1,
+     * else timeslot 2) and the number of announced neighbor sites.
+     */
+    private void updateNetworkSiteInfo()
+    {
+        DMRChannel currentChannel = mCurrentChannel;
+
+        mNetworkSiteInfo = NetworkSiteInfo.builder(Protocol.DMR)
+            .systemName(mBrand)
+            .system(toInteger(mDMRNetwork))
+            .site(toInteger(mDMRSite))
+            .accessCode(mColorCodeTS1 != null ? mColorCodeTS1 : mColorCodeTS2)
+            .controlChannelFrequency(currentChannel != null ? currentChannel.getDownlinkFrequency() : 0)
+            .neighborCount(mNeighborSites.size() + mTier3NeighborSites.size())
+            .build();
     }
 
     /**
@@ -126,6 +162,9 @@ public class DMRNetworkConfigurationMonitor
      */
     public void process(DataMessage dm)
     {
+        Integer colorCodeTS1 = mColorCodeTS1;
+        Integer colorCodeTS2 = mColorCodeTS2;
+
         if(dm.getTimeslot() == 1)
         {
             mColorCodeTS1 = dm.getSlotType().getColorCode();
@@ -133,6 +172,12 @@ public class DMRNetworkConfigurationMonitor
         else if(dm.getTimeslot() == 2)
         {
             mColorCodeTS2 = dm.getSlotType().getColorCode();
+        }
+
+        //Only update the snapshot when a color code changes, since every data burst carries the color code
+        if(!Objects.equals(colorCodeTS1, mColorCodeTS1) || !Objects.equals(colorCodeTS2, mColorCodeTS2))
+        {
+            updateNetworkSiteInfo();
         }
     }
 
@@ -197,6 +242,8 @@ public class DMRNetworkConfigurationMonitor
                     mBrand = BRAND_TIER_3_TRUNKING;
                 }
         }
+
+        updateNetworkSiteInfo();
     }
 
     /**
@@ -327,6 +374,8 @@ public class DMRNetworkConfigurationMonitor
                 mBrand = BRAND_MOTOROLA_CONNECT_PLUS;
                 break;
         }
+
+        updateNetworkSiteInfo();
     }
 
     /**

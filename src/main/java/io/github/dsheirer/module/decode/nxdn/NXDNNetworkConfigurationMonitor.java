@@ -19,6 +19,8 @@
 
 package io.github.dsheirer.module.decode.nxdn;
 
+import io.github.dsheirer.module.decode.network.NetworkSiteInfo;
+import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannel;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNLayer3Message;
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.AdjacentSiteInformation;
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.AdjacentSiteInformationTypeD;
@@ -30,11 +32,15 @@ import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.ServiceInformation
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.SiteInformation;
 import io.github.dsheirer.module.decode.nxdn.layer3.scch.RepeaterIdle;
 import io.github.dsheirer.module.decode.nxdn.layer3.scch.SiteID;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.LocationID;
+import io.github.dsheirer.protocol.Protocol;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import static io.github.dsheirer.module.decode.network.NetworkSiteInfo.toInteger;
 
 /**
  * Processes NXDN Layer 3 messages to assemble a snapshot of the site's broadcast configuration details
@@ -53,6 +59,10 @@ public class NXDNNetworkConfigurationMonitor
     private Integer mTypeDRepeater;
     private List<Integer> mTypeDObservedRepeaters = new ArrayList<>();
     private SiteID mTypeDSiteID;
+    private Integer mRAN;
+
+    //Immutable snapshot of the network and site details, updated by the decoder thread and read by other threads
+    private volatile NetworkSiteInfo mNetworkSiteInfo;
 
     /**
      * Constructs an instance
@@ -143,7 +153,64 @@ public class NXDNNetworkConfigurationMonitor
         return sb.toString();
     }
 
+    /**
+     * Snapshot of the decoded network and site details.  Safe to invoke from any thread.
+     * @return snapshot, or null when no network or site details have been decoded.
+     */
+    public NetworkSiteInfo getNetworkSiteInfo()
+    {
+        return mNetworkSiteInfo;
+    }
+
+    /**
+     * Updates the network and site details snapshot: system and site from the site information (or control channel
+     * information) location ID, the radio access number (RAN) of the most recent broadcast message, the control
+     * channel frequency and the number of announced neighbor sites.
+     */
+    private void updateNetworkSiteInfo()
+    {
+        NetworkSiteInfo.Builder builder = NetworkSiteInfo.builder(Protocol.NXDN);
+
+        LocationID locationID = mSiteInformation != null ? mSiteInformation.getLocationID() :
+            (mControlChannelInformation != null ? mControlChannelInformation.getLocationID() : null);
+
+        if(locationID != null)
+        {
+            builder.system(toInteger(locationID.getSystem())).site(toInteger(locationID.getSiteOrIntegrator()));
+        }
+
+        if(mControlChannelInformation != null && mControlChannelInformation.hasChannel1())
+        {
+            NXDNChannel channel = mControlChannelInformation.getChannel1();
+            builder.controlChannelFrequency(channel != null ? channel.getDownlinkFrequency() : 0);
+        }
+
+        int neighbors = mNeighborMap.size();
+
+        if(neighbors == 0)
+        {
+            neighbors += mTypeDNeighborA != null ? (mTypeDNeighborA.hasSite2() ? 2 : 1) : 0;
+            neighbors += mTypeDNeighborB != null ? (mTypeDNeighborB.hasSite2() ? 2 : 1) : 0;
+        }
+
+        mNetworkSiteInfo = builder.accessCode(mRAN).neighborCount(neighbors).build();
+    }
+
     public void process(NXDNLayer3Message layer3)
+    {
+        if(layer3.hasRAN())
+        {
+            mRAN = layer3.getRAN();
+        }
+
+        processMessage(layer3);
+        updateNetworkSiteInfo();
+    }
+
+    /**
+     * Processes the layer 3 broadcast message.
+     */
+    private void processMessage(NXDNLayer3Message layer3)
     {
         switch(layer3.getMessageType())
         {

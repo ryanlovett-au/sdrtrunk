@@ -41,10 +41,14 @@ import io.github.dsheirer.identifier.patch.PatchGroupPreLoadDataContent;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
+import io.github.dsheirer.module.decode.network.DecodeQualityTracker;
+import io.github.dsheirer.module.decode.network.INetworkSiteInfoProvider;
+import io.github.dsheirer.module.decode.network.NetworkSiteInfo;
 import io.github.dsheirer.module.decode.ip.IPacket;
 import io.github.dsheirer.module.decode.ip.UnknownPacket;
 import io.github.dsheirer.module.decode.ip.cellocator.MCGPPacket;
@@ -181,7 +185,7 @@ import org.slf4j.LoggerFactory;
  * Decoder state for an APCO25 channel.  Maintains the call/data/idle state of the channel and produces events by
  * monitoring the decoded message stream.
  */
-public class P25P1DecoderState extends DecoderState implements IChannelEventListener
+public class P25P1DecoderState extends DecoderState implements IChannelEventListener, INetworkSiteInfoProvider
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P1DecoderState.class);
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(LOGGER);
@@ -189,6 +193,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private final Modulation mModulation;
     private final PatchGroupManager mPatchGroupManager = new PatchGroupManager();
     private final P25P1NetworkConfigurationMonitor mNetworkConfigurationMonitor;
+    private final DecodeQualityTracker mDecodeQualityTracker = new DecodeQualityTracker();
     private final Listener<ChannelEvent> mChannelEventListener;
     private final P25TrafficChannelManager mTrafficChannelManager;
     private ServiceOptions mCurrentServiceOptions;
@@ -269,12 +274,71 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         }
     }
 
+    @Override
+    public NetworkSiteInfo getNetworkSiteInfo()
+    {
+        return mNetworkConfigurationMonitor.getNetworkSiteInfo();
+    }
+
+    @Override
+    public int getDecodeQuality()
+    {
+        return mDecodeQualityTracker.getQuality();
+    }
+
+    /**
+     * Airtime of a framed message on the channel, in bits, for the decode quality measure: the sync, NID, message,
+     * status symbols and trailing null bits from sync to the next sync.  Each block of a multi-block TSBK frame is
+     * delivered as a separate message, so the first block carries the sync, NID and its own block and each following
+     * block adds the length of one more block.  Messages that are assembled from several frames (e.g. AMBTC or SNDCP
+     * packet data) or derived from other messages return 0 and are not counted.
+     *
+     * @param dataUnitID of the message
+     * @return bits of airtime, or 0 when the message is not counted.
+     */
+    public static int getAirtimeBits(P25P1DataUnitID dataUnitID)
+    {
+        if(dataUnitID == null)
+        {
+            return 0;
+        }
+
+        return switch(dataUnitID)
+        {
+            case TRUNKING_SIGNALING_BLOCK_1 -> P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1.getElapsedDibitLength() * 2;
+            case TRUNKING_SIGNALING_BLOCK_2 -> (P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_2.getElapsedDibitLength() -
+                P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1.getElapsedDibitLength()) * 2;
+            case TRUNKING_SIGNALING_BLOCK_3 -> (P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_3.getElapsedDibitLength() -
+                P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_2.getElapsedDibitLength()) * 2;
+            case HEADER_DATA_UNIT, TERMINATOR_DATA_UNIT, LOGICAL_LINK_DATA_UNIT_1, LOGICAL_LINK_DATA_UNIT_2,
+                 TERMINATOR_DATA_UNIT_LINK_CONTROL, PACKET_DATA_UNIT -> dataUnitID.getElapsedDibitLength() * 2;
+            default -> 0;
+        };
+    }
+
+    /**
+     * Updates the decode quality from the framed messages (valid or not) and the sync loss messages.
+     */
+    private void updateDecodeQuality(IMessage message)
+    {
+        if(message instanceof P25P1Message p25)
+        {
+            mDecodeQualityTracker.message(p25.getTimestamp(), getAirtimeBits(p25.getDUID()), p25.isValid());
+        }
+        else if(message instanceof SyncLossMessage syncLoss)
+        {
+            mDecodeQualityTracker.syncLoss(syncLoss.getTimestamp(), syncLoss.getBitsProcessed());
+        }
+    }
+
     /**
      * Primary message processing method.
      */
     @Override
     public void receive(IMessage iMessage)
     {
+        updateDecodeQuality(iMessage);
+
         if(iMessage instanceof P25P1Message message)
         {
             getIdentifierCollection().update(message.getNAC());
@@ -2150,6 +2214,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             case REQUEST_RESET:
                 resetState();
                 mNetworkConfigurationMonitor.reset();
+                mDecodeQualityTracker.reset();
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
                 long frequency = event.getFrequency();

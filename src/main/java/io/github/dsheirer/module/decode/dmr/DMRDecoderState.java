@@ -40,12 +40,14 @@ import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.message.EmptyTimeslotPlaceholderMessage;
 import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.message.TimeslotMessage;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.channel.DMRAbsoluteChannel;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.dmr.channel.DMRLsn;
 import io.github.dsheirer.module.decode.dmr.event.DMRDecodeEvent;
+import io.github.dsheirer.module.decode.dmr.message.DMRBurst;
 import io.github.dsheirer.module.decode.dmr.message.DMRMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.DataMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.CSBKMessage;
@@ -104,6 +106,9 @@ import io.github.dsheirer.module.decode.ip.mototrbo.ars.ARSPacket;
 import io.github.dsheirer.module.decode.ip.mototrbo.lrrp.LRRPPacket;
 import io.github.dsheirer.module.decode.ip.mototrbo.tms.TMSPacket;
 import io.github.dsheirer.module.decode.ip.mototrbo.xcmp.XCMPPacket;
+import io.github.dsheirer.module.decode.network.DecodeQualityTracker;
+import io.github.dsheirer.module.decode.network.INetworkSiteInfoProvider;
+import io.github.dsheirer.module.decode.network.NetworkSiteInfo;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.tuner.channel.rotation.AddChannelRotationActiveStateRequest;
 import io.github.dsheirer.util.PacketUtil;
@@ -117,15 +122,22 @@ import org.slf4j.LoggerFactory;
  * Decoder state for an DMR channel.  Maintains the call/data/idle state of the channel and produces events by
  * monitoring the decoded message stream.
  */
-public class DMRDecoderState extends TimeslotDecoderState
+public class DMRDecoderState extends TimeslotDecoderState implements INetworkSiteInfoProvider
 {
+    /**
+     * Airtime of each DMR burst for the decode quality measure: 264 burst bits plus the 24-bit CACH, i.e. one 30 ms
+     * timeslot at 9600 bps.
+     */
+    public static final int AIRTIME_BITS_PER_BURST = 288;
+
     private final static Logger mLog = LoggerFactory.getLogger(DMRDecoderState.class);
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(mLog);
     private static final long MAX_VALID_CALL_DURATION_MS = 30000;
     private static final AddChannelRotationActiveStateRequest CAPACITY_PLUS_ACTIVE_STATE_REQUEST =
             new AddChannelRotationActiveStateRequest(State.ACTIVE);
     private Channel mChannel;
-    private DMRNetworkConfigurationMonitor mNetworkConfigurationMonitor;
+    private volatile DMRNetworkConfigurationMonitor mNetworkConfigurationMonitor;
+    private DecodeQualityTracker mDecodeQualityTracker;
     private DMRTrafficChannelManager mTrafficChannelManager;
     private DecodeEvent mCurrentCallEvent;
     private boolean mIgnoreCRCChecksums;
@@ -148,6 +160,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         if(timeslot == 1)
         {
             mNetworkConfigurationMonitor = new DMRNetworkConfigurationMonitor(channel);
+            mDecodeQualityTracker = new DecodeQualityTracker();
         }
 
         //For RAS protected systems, allows user to ignore CRC checksums and still decode the system
@@ -226,6 +239,41 @@ public class DMRDecoderState extends TimeslotDecoderState
         return message != null && (mIgnoreCRCChecksums || message.isValid());
     }
 
+    @Override
+    public NetworkSiteInfo getNetworkSiteInfo()
+    {
+        DMRNetworkConfigurationMonitor monitor = mNetworkConfigurationMonitor;
+        return monitor != null ? monitor.getNetworkSiteInfo() : null;
+    }
+
+    /**
+     * Decode quality, tracked by the timeslot 1 decoder state only since it receives the messages of all timeslots.
+     */
+    @Override
+    public int getDecodeQuality()
+    {
+        return mDecodeQualityTracker != null ? mDecodeQualityTracker.getQuality() : DecodeQualityTracker.UNKNOWN;
+    }
+
+    /**
+     * Updates the decode quality (timeslot 1 decoder state only) from the framed bursts of both timeslots (valid or
+     * not, honoring the ignore CRC checksums setting) and the sync loss messages.
+     */
+    private void updateDecodeQuality(IMessage message)
+    {
+        if(mDecodeQualityTracker != null)
+        {
+            if(message instanceof DMRBurst burst)
+            {
+                mDecodeQualityTracker.message(burst.getTimestamp(), AIRTIME_BITS_PER_BURST, isValid(burst));
+            }
+            else if(message instanceof SyncLossMessage syncLoss)
+            {
+                mDecodeQualityTracker.syncLoss(syncLoss.getTimestamp(), syncLoss.getBitsProcessed());
+            }
+        }
+    }
+
     /**
      * Indicates if this decoder state has an (optional) traffic channel manager.
      */
@@ -296,6 +344,8 @@ public class DMRDecoderState extends TimeslotDecoderState
     @Override
     public void receive(IMessage message)
     {
+        updateDecodeQuality(message);
+
         if(message.getTimeslot() == getTimeslot())
         {
             if(message instanceof VoiceMessage voice)
@@ -1526,6 +1576,11 @@ public class DMRDecoderState extends TimeslotDecoderState
         {
             case REQUEST_RESET:
                 resetState();
+
+                if(mDecodeQualityTracker != null)
+                {
+                    mDecodeQualityTracker.reset();
+                }
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
                 setCurrentFrequency(event.getFrequency());

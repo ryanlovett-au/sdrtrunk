@@ -29,7 +29,9 @@ import io.github.dsheirer.console.ConsoleLayoutEvent;
 import io.github.dsheirer.console.ConsoleLayoutManager;
 import io.github.dsheirer.console.activity.ConsoleActivityRouter;
 import io.github.dsheirer.console.activity.ConsoleActivitySnapshot;
+import io.github.dsheirer.console.ConsoleAliasDrop;
 import io.github.dsheirer.console.control.ControlChannelMonitor;
+import io.github.dsheirer.console.control.NetworkSiteDetailProvider;
 import io.github.dsheirer.gui.ApplicationWindowRegistry;
 import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.preference.UserPreferences;
@@ -159,6 +161,9 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         mActivityRouter = activityRouter;
         mControlChannelMonitor = new ControlChannelMonitor(playlistManager.getChannelModel(),
             playlistManager.getChannelProcessingManager());
+        mControlChannelMonitor.setDetailProvider(
+            new NetworkSiteDetailProvider(playlistManager.getChannelProcessingManager()));
+        mActivityRouter.setDecodedSiteResolver(mControlChannelMonitor);
     }
 
     /**
@@ -834,6 +839,22 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         }
 
         mLayoutManager.moveCard(cardId, targetGroupId, index);
+    }
+
+    /**
+     * Adds the dropped aliases (e.g. alias sheet rows) to the group: one card per alias, moving cards that are in
+     * another group (see ConsoleAliasDrop).
+     * @param groupId of the target group
+     * @param aliasUuids in drag order
+     * @return outcome of the drop
+     */
+    ConsoleAliasDrop.Result addAliases(String groupId, List<String> aliasUuids)
+    {
+        ConsoleAliasDrop.Result result = ConsoleAliasDrop.apply(mLayoutManager, groupId, aliasUuids,
+            uuid -> mAliasModel.getAliasByUuid(uuid) != null);
+        ConsoleGroup group = mLayout.getGroup(groupId);
+        mLog.info("Aliases dropped on console group: " + result.describe(group != null ? group.getName() : groupId));
+        return result;
     }
 
     /**

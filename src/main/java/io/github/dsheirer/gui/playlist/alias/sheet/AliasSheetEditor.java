@@ -29,9 +29,11 @@ import io.github.dsheirer.alias.sheet.DelimitedText;
 import io.github.dsheirer.alias.sheet.SheetRange;
 import io.github.dsheirer.alias.sheet.TalkgroupConflict;
 import io.github.dsheirer.alias.sheet.TalkgroupConflictDetector;
+import io.github.dsheirer.console.ConsoleAliasDrop;
 import io.github.dsheirer.console.ConsoleLayoutEvent;
 import io.github.dsheirer.console.ConsoleLayoutManager;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.console.AliasDragFormat;
 import io.github.dsheirer.gui.playlist.alias.ViewAliasRequest;
 import io.github.dsheirer.icon.Icon;
 import io.github.dsheirer.playlist.PlaylistManager;
@@ -59,6 +61,10 @@ import javafx.collections.transformation.FilteredList;
 import javafx.collections.transformation.SortedList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Group;
+import javafx.scene.Node;
+import javafx.scene.Scene;
+import javafx.scene.SnapshotParameters;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
@@ -82,15 +88,18 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.Dragboard;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.input.TransferMode;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.stage.FileChooser;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.javafx.IconNode;
@@ -145,6 +154,7 @@ public class AliasSheetEditor extends BorderPane
     private Label mConsoleCountLabel;
     private Label mConflictCountLabel;
     private Label mStatusLabel;
+    private List<Alias> mConsoleDragAliases;
     private TalkgroupConflictDetector.Report mConflictReport = TalkgroupConflictDetector.Report.empty();
     private boolean mRefreshScheduled = false;
     private String mPendingEditText;
@@ -258,7 +268,8 @@ public class AliasSheetEditor extends BorderPane
 
         MenuButton consoleButton = new MenuButton("Add selected to console");
         consoleButton.setGraphic(new IconNode(FontAwesome.TH_LARGE));
-        consoleButton.setTooltip(new Tooltip("Assign the aliases in the selected rows to a console group"));
+        consoleButton.setTooltip(new Tooltip("Assign the aliases in the selected rows to a console group.\nYou can " +
+            "also drag a selection onto a group in the console window."));
         consoleButton.setOnShowing(event -> populateConsoleMenu(consoleButton));
         populateConsoleMenu(consoleButton);
         consoleButton.setDisable(mModel.getConsoleLayoutManager() == null);
@@ -1443,6 +1454,73 @@ public class AliasSheetEditor extends BorderPane
     private void setStatus(String status)
     {
         mStatusLabel.setText(status);
+    }
+
+    /**
+     * Indicates if the selected rows can be dragged onto console groups (the console layout is available).
+     */
+    boolean isConsoleDragEnabled()
+    {
+        return mModel.getConsoleLayoutManager() != null;
+    }
+
+    /**
+     * Captures the aliases of the selected rows when the mouse is pressed on an already selected cell, before the
+     * table changes the selection, so that a drag that follows carries the whole selection.
+     */
+    void armConsoleDrag()
+    {
+        mConsoleDragAliases = getSelectedAliases();
+    }
+
+    /**
+     * Starts dragging the aliases captured by armConsoleDrag() to the console window, where they can be dropped onto
+     * a console group (see ConsoleGroupView).  The drag carries the alias unique identifiers in a custom data format
+     * and shows the number of aliases as the drag view.
+     * @param source node of the drag gesture
+     * @return true if a drag was started.
+     */
+    boolean startConsoleDrag(Node source)
+    {
+        List<Alias> aliases = mConsoleDragAliases;
+        mConsoleDragAliases = null;
+
+        if(aliases == null || aliases.isEmpty() || !isConsoleDragEnabled())
+        {
+            return false;
+        }
+
+        List<String> uuids = new ArrayList<>();
+
+        for(Alias alias: aliases)
+        {
+            uuids.add(alias.getUuid());
+        }
+
+        String label = ConsoleAliasDrop.getDragLabel(uuids.size());
+        Dragboard dragboard = source.startDragAndDrop(TransferMode.COPY);
+        ClipboardContent content = new ClipboardContent();
+        AliasDragFormat.put(content, uuids);
+        dragboard.setContent(content);
+        dragboard.setDragView(createDragView(label));
+        setStatus("Drop on a console group to add " + label + " to the console");
+        return true;
+    }
+
+    /**
+     * Creates the drag view image: a small badge with the label (e.g. "3 aliases").
+     */
+    private static Image createDragView(String text)
+    {
+        Label badge = new Label(text);
+        badge.setStyle("-fx-background-color: #14365E; -fx-text-fill: white; -fx-font-weight: bold; " +
+            "-fx-padding: 4 10 4 10; -fx-background-radius: 3;");
+        new Scene(new Group(badge)).setFill(Color.TRANSPARENT);
+        badge.applyCss();
+        badge.autosize();
+        SnapshotParameters parameters = new SnapshotParameters();
+        parameters.setFill(Color.TRANSPARENT);
+        return badge.snapshot(parameters, null);
     }
 
     /**

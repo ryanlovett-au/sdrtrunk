@@ -33,7 +33,9 @@ import javafx.scene.layout.VBox;
 /**
  * Console group panel: navy header with the group name and active call count, and the group's cards in a vertical
  * list.  In edit mode the header has move, rename and delete buttons, the panel has an add talkgroup button, and
- * cards can be dropped onto the panel (appended to the group).  Invoke all methods on the JavaFX thread.
+ * cards can be dropped onto the panel (appended to the group).  In any mode, aliases dragged from the alias sheet can be
+ * dropped onto the panel (header or cards) to add their cards to the group, or move them from another group.  Invoke
+ * all methods on the JavaFX thread.
  */
 public class ConsoleGroupView extends VBox
 {
@@ -153,6 +155,21 @@ public class ConsoleGroupView extends VBox
     }
 
     /**
+     * Shows or hides the drop highlight on the group's cards area.
+     */
+    private void setDropHighlight(boolean highlight)
+    {
+        if(highlight && !mCardsBox.getStyleClass().contains("drop-target"))
+        {
+            mCardsBox.getStyleClass().add("drop-target");
+        }
+        else if(!highlight)
+        {
+            mCardsBox.getStyleClass().remove("drop-target");
+        }
+    }
+
+    /**
      * Cards dropped onto the group panel (outside of another card) are appended to the group.
      */
     private void setupDropTarget()
@@ -172,6 +189,31 @@ public class ConsoleGroupView extends VBox
         });
 
         mCardsBox.setOnDragExited(event -> mCardsBox.getStyleClass().remove("drop-target"));
+
+        //Aliases dragged from the alias sheet: drag events that the cards and the cards box do not consume bubble up
+        //to the group panel, so the whole panel (header included) is the drop target.
+        setOnDragOver(event -> {
+            if(AliasDragFormat.hasAliases(event.getDragboard()))
+            {
+                event.acceptTransferModes(TransferMode.COPY);
+                setDropHighlight(true);
+                event.consume();
+            }
+        });
+
+        setOnDragExited(event -> setDropHighlight(false));
+
+        setOnDragDropped(event -> {
+            setDropHighlight(false);
+            List<String> aliasUuids = AliasDragFormat.getAliasUuids(event.getDragboard());
+
+            if(!aliasUuids.isEmpty())
+            {
+                mConsoleWindow.addAliases(mGroup.getId(), aliasUuids);
+                event.setDropCompleted(true);
+                event.consume();
+            }
+        });
 
         mCardsBox.setOnDragDropped(event -> {
             mCardsBox.getStyleClass().remove("drop-target");

@@ -49,6 +49,7 @@ import javafx.scene.image.ImageView;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
 
@@ -78,6 +79,7 @@ public class AliasSheetCell extends TableCell<Alias,String>
     private String mHighlightColor;
     private String mHighlightBorder;
     private String mTextStyle = "";
+    private boolean mConsoleDragArmed;
 
     /**
      * Constructs an instance
@@ -88,6 +90,37 @@ public class AliasSheetCell extends TableCell<Alias,String>
     {
         mEditor = editor;
         mColumn = column;
+
+        //Dragging from an already selected cell drags the selected rows to the console window (drop on a console
+        //group); dragging from an unselected cell keeps the normal cell range selection.  The selection is captured on
+        //press and mouse drags are consumed so that the table does not change the selection while dragging.
+        addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
+            mConsoleDragArmed = event.getButton() == MouseButton.PRIMARY && !event.isShortcutDown() &&
+                !event.isShiftDown() && !isEmpty() && isSelected() && !isEditing() && mEditor.isConsoleDragEnabled();
+
+            if(mConsoleDragArmed)
+            {
+                mEditor.armConsoleDrag();
+            }
+        });
+        addEventFilter(MouseEvent.MOUSE_DRAGGED, event -> {
+            if(mConsoleDragArmed)
+            {
+                event.consume();
+            }
+        });
+        addEventFilter(MouseEvent.MOUSE_RELEASED, event -> mConsoleDragArmed = false);
+        setOnDragDetected(event -> {
+            if(mConsoleDragArmed)
+            {
+                mConsoleDragArmed = false;
+
+                if(mEditor.startConsoleDrag(this))
+                {
+                    event.consume();
+                }
+            }
+        });
 
         setOnMouseClicked(event -> {
             if(event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2 && !isEmpty())

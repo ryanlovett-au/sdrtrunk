@@ -20,7 +20,9 @@
 package io.github.dsheirer.module.decode.p25.phase2;
 
 import io.github.dsheirer.channel.IBandChannelDescriptor;
+import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.module.decode.network.NetworkSiteInfo;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.AdjacentStatusBroadcastExplicit;
@@ -39,7 +41,9 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SNDCPDa
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SecondaryControlChannelBroadcastExplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SecondaryControlChannelBroadcastImplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SystemServiceBroadcast;
+import io.github.dsheirer.protocol.Protocol;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -48,6 +52,8 @@ import java.util.TreeSet;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static io.github.dsheirer.module.decode.network.NetworkSiteInfo.toInteger;
 
 /**
  * Tracks the network configuration details of a P25 Phase 2 network from the broadcast messages
@@ -79,6 +85,9 @@ public class P25P2NetworkConfigurationMonitor
     private Map<Integer, AdjacentStatusBroadcastImplicit> mNeighborSitesAbbreviated = new HashMap<>();
     private Map<Integer, AdjacentStatusBroadcastExplicit> mNeighborSitesExtended = new HashMap<>();
     private Map<Integer, AdjacentStatusBroadcastExtendedExplicit> mNeighborSitesExtendedExplicit = new HashMap<>();
+
+    //Immutable snapshot of the network and site details, updated by the decoder thread and read by other threads
+    private volatile NetworkSiteInfo mNetworkSiteInfo;
 
     /**
      * Constructs an instance.
@@ -214,6 +223,8 @@ public class P25P2NetworkConfigurationMonitor
                 }
                 break;
         }
+
+        updateNetworkSiteInfo();
     }
 
     public void reset()
@@ -227,6 +238,73 @@ public class P25P2NetworkConfigurationMonitor
         mSystemServiceBroadcast = null;
         mNeighborSitesAbbreviated.clear();
         mNeighborSitesExtended.clear();
+        mNetworkSiteInfo = null;
+    }
+
+    /**
+     * Snapshot of the decoded network and site details.  Safe to invoke from any thread.
+     * @return snapshot, or null when no network or site details have been decoded.
+     */
+    public NetworkSiteInfo getNetworkSiteInfo()
+    {
+        return mNetworkSiteInfo;
+    }
+
+    /**
+     * Updates the network and site details snapshot from the most recent network status and RFSS (current site)
+     * status broadcasts.
+     */
+    private void updateNetworkSiteInfo()
+    {
+        NetworkSiteInfo.Builder builder = NetworkSiteInfo.builder(Protocol.APCO25_PHASE2);
+
+        if(mNetworkStatusBroadcastImplicit != null)
+        {
+            builder.wacn(toInteger(mNetworkStatusBroadcastImplicit.getWACN()))
+                .system(toInteger(mNetworkStatusBroadcastImplicit.getSystem()))
+                .accessCode(toInteger(mNetworkStatusBroadcastImplicit.getNAC()))
+                .locationRegistrationArea(toInteger(mNetworkStatusBroadcastImplicit.getLRA()));
+        }
+        else if(mNetworkStatusBroadcastExplicit != null)
+        {
+            builder.wacn(toInteger(mNetworkStatusBroadcastExplicit.getWACN()))
+                .system(toInteger(mNetworkStatusBroadcastExplicit.getSystem()))
+                .accessCode(toInteger(mNetworkStatusBroadcastExplicit.getNAC()))
+                .locationRegistrationArea(toInteger(mNetworkStatusBroadcastExplicit.getLRA()));
+        }
+
+        if(mRFSSStatusBroadcastImplicit != null)
+        {
+            builder.system(toInteger(mRFSSStatusBroadcastImplicit.getSystem()))
+                .rfss(toInteger(mRFSSStatusBroadcastImplicit.getRFSS()))
+                .site(toInteger(mRFSSStatusBroadcastImplicit.getSite()))
+                .locationRegistrationArea(toInteger(mRFSSStatusBroadcastImplicit.getLRA()))
+                .controlChannelFrequency(getDownlinkFrequency(mRFSSStatusBroadcastImplicit.getChannel()));
+        }
+        else if(mRFSSStatusBroadcastExplicit != null)
+        {
+            builder.system(toInteger(mRFSSStatusBroadcastExplicit.getSystem()))
+                .rfss(toInteger(mRFSSStatusBroadcastExplicit.getRFSS()))
+                .site(toInteger(mRFSSStatusBroadcastExplicit.getSite()))
+                .locationRegistrationArea(toInteger(mRFSSStatusBroadcastExplicit.getLRA()))
+                .controlChannelFrequency(getDownlinkFrequency(mRFSSStatusBroadcastExplicit.getChannel()));
+        }
+
+        Set<Integer> neighbors = new HashSet<>();
+        neighbors.addAll(mNeighborSitesAbbreviated.keySet());
+        neighbors.addAll(mNeighborSitesExtended.keySet());
+        neighbors.addAll(mNeighborSitesExtendedExplicit.keySet());
+        builder.neighborCount(neighbors.size());
+
+        mNetworkSiteInfo = builder.build();
+    }
+
+    /**
+     * Downlink frequency of the channel, or 0 when the channel or its frequency band is not known.
+     */
+    private static long getDownlinkFrequency(IChannelDescriptor channel)
+    {
+        return channel != null ? channel.getDownlinkFrequency() : 0;
     }
 
     public String getActivitySummary()

@@ -31,6 +31,7 @@ import io.github.dsheirer.console.audio.ConsoleAudioLevels;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -371,5 +372,34 @@ public class ConsoleActivityRouterTest
             APCO25Talkgroup.create(TALKGROUP_ON_CARD)));
         assertEquals(SITE, ConsoleActivityRouter.getSite(identifiers));
         assertNull(ConsoleActivityRouter.getSite(new IdentifierCollection(List.of(APCO25Talkgroup.create(1)))));
+    }
+
+    @Test
+    void siteIsEnrichedWithDecodedSiteOfControlChannel()
+    {
+        List<String> lookups = new ArrayList<>();
+        mRouter.setDecodedSiteResolver((system, site, channelName) -> {
+            lookups.add(site + "|" + channelName);
+            return SITE.equals(site) && "T-North".equals(channelName) ? "1-3" : null;
+        });
+
+        List<Identifier> identifiers = new ArrayList<>();
+        identifiers.add(APCO25Talkgroup.create(TALKGROUP_ON_CARD));
+        identifiers.add(APCO25RadioIdentifier.createFrom(RADIO_2));
+        identifiers.add(AliasListConfigurationIdentifier.create(ALIAS_LIST));
+        identifiers.add(SiteConfigurationIdentifier.create(SITE));
+        identifiers.add(ChannelNameConfigurationIdentifier.create("T-North"));
+        mRouter.receive(DecodeEvent.builder(DecodeEventType.CALL_GROUP, mClock.get())
+            .identifiers(new IdentifierCollection(identifiers)).protocol(Protocol.APCO25).build());
+
+        String expected = SITE + ConsoleActivityRouter.SITE_SEPARATOR + "1-3";
+        assertEquals("North Hill · 1-3", expected);
+        assertEquals(expected, mRouter.getSnapshot().getCard(mFireDispatchCard.getId()).site());
+        assertEquals(expected, mRouter.getSnapshot().log().getFirst().site());
+        assertEquals(List.of(SITE + "|T-North"), lookups);
+
+        //Unresolved: configured site only
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD_2, RADIO_3, mClock.get()));
+        assertEquals(SITE, mRouter.getSnapshot().getCard(mFiregroundCard.getId()).site());
     }
 }

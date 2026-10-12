@@ -99,6 +99,10 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
      */
     public static final int ACTIVITY_LOG_LIMIT = 50;
     /**
+     * Separator between the site name and the decoded site identifier, e.g. "North Hill · 1-3".
+     */
+    public static final String SITE_SEPARATOR = " · ";
+    /**
      * Time after the last update after which a call event is no longer tracked.
      */
     private static final long CALL_RETENTION_MS = 30000;
@@ -125,6 +129,7 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     private long mLogSequence;
     private long mLogVersion;
     private volatile long mHangTimeMs;
+    private volatile IDecodedSiteResolver mDecodedSiteResolver;
 
     /**
      * Constructs an instance that uses the system clock and the default call update timeout, and registers for console
@@ -166,6 +171,17 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     public void dispose()
     {
         mConsoleLayoutManager.removeListener(mLayoutListener);
+    }
+
+    /**
+     * Sets the resolver for the decoded site identifier of the control channel that each call is received through, to
+     * enrich the card and activity log site (e.g. "North Hill · 1-3") when the call event does not carry decoded site
+     * identifiers.
+     * @param decodedSiteResolver to use, or null for none
+     */
+    public void setDecodedSiteResolver(IDecodedSiteResolver decodedSiteResolver)
+    {
+        mDecodedSiteResolver = decodedSiteResolver;
     }
 
     /**
@@ -237,7 +253,8 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
                 return;
             }
 
-            CallDetails details = getCallDetails(event, identifierCollection, aliasList, to, card);
+            CallDetails details = getCallDetails(event, identifierCollection, aliasList, to, card,
+                mDecodedSiteResolver);
             update(event, card, details);
         }
         catch(Exception e)
@@ -250,7 +267,8 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
      * Extracts the call details (talker, site, talkgroup and card alias name) from the event.
      */
     private static CallDetails getCallDetails(IDecodeEvent event, IdentifierCollection identifierCollection,
-                                              AliasList aliasList, Identifier to, ConsoleCard card)
+                                              AliasList aliasList, Identifier to, ConsoleCard card,
+                                              IDecodedSiteResolver decodedSiteResolver)
     {
         Identifier from = identifierCollection.getFromIdentifier();
         String talkerId = null;
@@ -286,8 +304,8 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
             cardAliasName = card.getSignature().getAliasName();
         }
 
-        return new CallDetails(talkerId, talkerName, getSite(identifierCollection), to.toString(), cardAliasName,
-            isEncrypted(event));
+        return new CallDetails(talkerId, talkerName, getSite(identifierCollection, decodedSiteResolver), to.toString(),
+            cardAliasName, isEncrypted(event));
     }
 
     /**
@@ -317,12 +335,27 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     /**
      * Describes the site where the call is received: the site name from the channel configuration (or the system or
      * channel name when the site is not configured), followed by any decoded RFSS and site identifiers carried in the
-     * identifier collection (e.g. "North Hill 1-3").
+     * identifier collection (e.g. "North Hill · 1-3").
      *
      * @param identifierCollection for the call
      * @return site description or null.
      */
     public static String getSite(IdentifierCollection identifierCollection)
+    {
+        return getSite(identifierCollection, null);
+    }
+
+    /**
+     * Describes the site where the call is received: the site name from the channel configuration (or the system or
+     * channel name when the site is not configured), followed by the decoded site identifier: from the decoded RFSS
+     * and site identifiers carried in the identifier collection, otherwise from the resolver (the decoded site of the
+     * control channel that granted the call).  For example "North Hill · 1-3".
+     *
+     * @param identifierCollection for the call
+     * @param decodedSiteResolver for the decoded site of the call's control channel, or null
+     * @return site description or null.
+     */
+    public static String getSite(IdentifierCollection identifierCollection, IDecodedSiteResolver decodedSiteResolver)
     {
         String site = null;
         String system = null;
@@ -360,9 +393,21 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
         String name = site != null ? site : (system != null ? system : channel);
         String decoded = decodedSite != null ? (rfss != null ? rfss + "-" + decodedSite : decodedSite) : null;
 
+        if(decoded == null && decodedSiteResolver != null)
+        {
+            try
+            {
+                decoded = decodedSiteResolver.getDecodedSiteId(system, site, channel);
+            }
+            catch(Exception e)
+            {
+                mLog.debug("Error resolving the decoded site for a call", e);
+            }
+        }
+
         if(name != null && decoded != null)
         {
-            return name + " " + decoded;
+            return name + SITE_SEPARATOR + decoded;
         }
 
         return name != null ? name : decoded;

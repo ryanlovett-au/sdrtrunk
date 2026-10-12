@@ -42,10 +42,15 @@ import io.github.dsheirer.identifier.patch.PatchGroupPreLoadDataContent;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.message.SyncLossMessage;
+import io.github.dsheirer.message.TimeslotMessage;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
+import io.github.dsheirer.module.decode.network.DecodeQualityTracker;
+import io.github.dsheirer.module.decode.network.INetworkSiteInfoProvider;
+import io.github.dsheirer.module.decode.network.NetworkSiteInfo;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
@@ -55,6 +60,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.MotorolaTalkerAliasComplete;
 import io.github.dsheirer.module.decode.p25.phase2.message.EncryptionSynchronizationSequence;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.IP25ChannelGrantDetailProvider;
+import io.github.dsheirer.module.decode.p25.phase2.message.isch.IISCH;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacPduType;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.AcknowledgeResponseFNEAbbreviated;
@@ -139,13 +145,21 @@ import org.slf4j.LoggerFactory;
  * Decoder state for an APCO-25 Phase II channel.  Maintains the call/control/data/idle state of the channel and
  * produces events by monitoring the decoded message stream.
  */
-public class P25P2DecoderState extends TimeslotDecoderState implements IdentifierUpdateListener
+public class P25P2DecoderState extends TimeslotDecoderState implements IdentifierUpdateListener,
+    INetworkSiteInfoProvider
 {
+    /**
+     * Airtime represented by each inbound informational slot channel (I-ISCH) message for the decode quality measure:
+     * each superframe fragment of 4 timeslots (4 x 360 bits, including the ISCH) carries 2 I-ISCH messages.
+     */
+    public static final int AIRTIME_BITS_PER_IISCH = 720;
+
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P2DecoderState.class);
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(LOGGER);
     private Channel mChannel;
     private PatchGroupManager mPatchGroupManager;
     private P25P2NetworkConfigurationMonitor mNetworkConfigurationMonitor = new P25P2NetworkConfigurationMonitor();
+    private final DecodeQualityTracker mDecodeQualityTracker = new DecodeQualityTracker();
     private P25TrafficChannelManager mTrafficChannelManager;
     private int mEndPttOnFacchCounter = 0;
 
@@ -216,12 +230,52 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         }
     }
 
+    @Override
+    public NetworkSiteInfo getNetworkSiteInfo()
+    {
+        return mNetworkConfigurationMonitor.getNetworkSiteInfo();
+    }
+
+    /**
+     * Decode quality, tracked by the timeslot 1 decoder state only since the decoder state for each timeslot receives
+     * the messages of both timeslots.
+     */
+    @Override
+    public int getDecodeQuality()
+    {
+        return getTimeslot() == TimeslotMessage.TIMESLOT_1 ? mDecodeQualityTracker.getQuality() :
+            DecodeQualityTracker.UNKNOWN;
+    }
+
+    /**
+     * Updates the decode quality (timeslot 1 decoder state only) from the I-ISCH messages, whose validity reflects
+     * whether each half superframe fragment could be decoded, and from the sync loss messages.
+     */
+    private void updateDecodeQuality(IMessage message)
+    {
+        if(getTimeslot() != TimeslotMessage.TIMESLOT_1)
+        {
+            return;
+        }
+
+        if(message instanceof IISCH iisch)
+        {
+            mDecodeQualityTracker.message(iisch.getTimestamp(), AIRTIME_BITS_PER_IISCH, iisch.isValid());
+        }
+        else if(message instanceof SyncLossMessage syncLoss)
+        {
+            mDecodeQualityTracker.syncLoss(syncLoss.getTimestamp(), syncLoss.getBitsProcessed());
+        }
+    }
+
     /**
      * Primary message processing method.
      */
     @Override
     public void receive(IMessage message)
     {
+        updateDecodeQuality(message);
+
         if(message.isValid() && message.getTimeslot() == getTimeslot())
         {
             if(message instanceof MacMessage macMessage)
@@ -1856,6 +1910,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 case REQUEST_RESET:
                     resetState();
                     mNetworkConfigurationMonitor.reset();
+                    mDecodeQualityTracker.reset();
                     break;
                 case NOTIFICATION_SOURCE_FREQUENCY:
                     long frequency = event.getFrequency();

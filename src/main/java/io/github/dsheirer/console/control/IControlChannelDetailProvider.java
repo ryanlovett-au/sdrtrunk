@@ -23,9 +23,10 @@ import io.github.dsheirer.controller.channel.Channel;
 /**
  * Provides decoded network details (site ID, NAC, decode quality) for a running control channel.
  *
- * This is the seam for console phase 4: an implementation backed by the protocol network configuration monitors
- * (e.g. P25 RFSS/site/NAC) is registered with the ControlChannelMonitor.  Until then, the monitor uses
- * ControlChannelDetail.NONE and the console shows only the configured channel details.
+ * NetworkSiteDetailProvider is the implementation backed by the protocol network configuration monitors (e.g. P25
+ * RFSS/site/NAC) and decode quality trackers; it is registered with the ControlChannelMonitor by the console window.
+ * Without a provider, the monitor uses ControlChannelDetail.NONE and the console shows only the configured channel
+ * details.
  *
  * Implementations are invoked on the JavaFX application thread (about once per second per control channel) and should
  * return quickly from an already-captured snapshot.

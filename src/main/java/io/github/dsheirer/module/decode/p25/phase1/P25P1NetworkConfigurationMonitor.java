@@ -20,7 +20,9 @@
 package io.github.dsheirer.module.decode.p25.phase1;
 
 import io.github.dsheirer.channel.IBandChannelDescriptor;
+import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.module.decode.network.NetworkSiteInfo;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
@@ -47,7 +49,9 @@ import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SND
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SecondaryControlChannelBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SecondaryControlChannelBroadcastExplicit;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SystemServiceBroadcast;
+import io.github.dsheirer.protocol.Protocol;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -56,6 +60,8 @@ import java.util.TreeSet;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static io.github.dsheirer.module.decode.network.NetworkSiteInfo.toInteger;
 
 /**
  * Tracks the network configuration details of a P25 Phase 1 network from the broadcast messages
@@ -98,6 +104,9 @@ public class P25P1NetworkConfigurationMonitor
     private MotorolaBaseStationId mMotorolaBaseStationId;
 
     private Modulation mModulation;
+
+    //Immutable snapshot of the network and site details, updated by the decoder thread and read by other threads
+    private volatile NetworkSiteInfo mNetworkSiteInfo;
 
     /**
      * Constructs a network configuration monitor.
@@ -188,6 +197,8 @@ public class P25P1NetworkConfigurationMonitor
                 }
                 break;
         }
+
+        updateNetworkSiteInfo();
     }
 
     /**
@@ -218,6 +229,8 @@ public class P25P1NetworkConfigurationMonitor
                 break;
 //TODO: process the rest of the messages here
         }
+
+        updateNetworkSiteInfo();
     }
 
     /**
@@ -304,6 +317,7 @@ public class P25P1NetworkConfigurationMonitor
                     break;
             }
 
+            updateNetworkSiteInfo();
         }
 
     }
@@ -326,6 +340,100 @@ public class P25P1NetworkConfigurationMonitor
         mLCNeighborSites.clear();
         mLCNeighborSitesExplicit.clear();
         mTSBKNeighborSites.clear();
+        mNetworkSiteInfo = null;
+    }
+
+    /**
+     * Snapshot of the decoded network and site details.  Safe to invoke from any thread.
+     * @return snapshot, or null when no network or site details have been decoded.
+     */
+    public NetworkSiteInfo getNetworkSiteInfo()
+    {
+        return mNetworkSiteInfo;
+    }
+
+    /**
+     * Updates the network and site details snapshot from the most recent network status and RFSS (current site)
+     * status broadcasts.  The TSBK variants are preferred, followed by the AMBTC and the link control variants.
+     */
+    private void updateNetworkSiteInfo()
+    {
+        NetworkSiteInfo.Builder builder = NetworkSiteInfo.builder(Protocol.APCO25);
+
+        if(mTSBKNetworkStatusBroadcast != null)
+        {
+            builder.wacn(toInteger(mTSBKNetworkStatusBroadcast.getWacn()))
+                .system(toInteger(mTSBKNetworkStatusBroadcast.getSystem()))
+                .accessCode(toInteger(mTSBKNetworkStatusBroadcast.getNAC()))
+                .locationRegistrationArea(toInteger(mTSBKNetworkStatusBroadcast.getLocationRegistrationArea()));
+        }
+        else if(mAMBTCNetworkStatusBroadcast != null)
+        {
+            builder.wacn(toInteger(mAMBTCNetworkStatusBroadcast.getWacn()))
+                .system(toInteger(mAMBTCNetworkStatusBroadcast.getSystem()))
+                .accessCode(toInteger(mAMBTCNetworkStatusBroadcast.getNAC()));
+        }
+        else if(mLCNetworkStatusBroadcast != null)
+        {
+            builder.wacn(toInteger(mLCNetworkStatusBroadcast.getWACN()))
+                .system(toInteger(mLCNetworkStatusBroadcast.getSystem()));
+        }
+        else if(mLCNetworkStatusBroadcastExplicit != null)
+        {
+            builder.wacn(toInteger(mLCNetworkStatusBroadcastExplicit.getWACN()))
+                .system(toInteger(mLCNetworkStatusBroadcastExplicit.getSystem()));
+        }
+
+        if(mTSBKRFSSStatusBroadcast != null)
+        {
+            builder.system(toInteger(mTSBKRFSSStatusBroadcast.getSystem()))
+                .accessCode(toInteger(mTSBKRFSSStatusBroadcast.getNAC()))
+                .rfss(toInteger(mTSBKRFSSStatusBroadcast.getRfss()))
+                .site(toInteger(mTSBKRFSSStatusBroadcast.getSite()))
+                .locationRegistrationArea(toInteger(mTSBKRFSSStatusBroadcast.getLocationRegistrationArea()))
+                .controlChannelFrequency(getDownlinkFrequency(mTSBKRFSSStatusBroadcast.getChannel()));
+        }
+        else if(mLCRFSSStatusBroadcast != null)
+        {
+            builder.system(toInteger(mLCRFSSStatusBroadcast.getSystem()))
+                .rfss(toInteger(mLCRFSSStatusBroadcast.getRfss()))
+                .site(toInteger(mLCRFSSStatusBroadcast.getSite()))
+                .locationRegistrationArea(toInteger(mLCRFSSStatusBroadcast.getLocationRegistrationArea()))
+                .controlChannelFrequency(getDownlinkFrequency(mLCRFSSStatusBroadcast.getChannel()));
+        }
+        else if(mLCRFSSStatusBroadcastExplicit != null)
+        {
+            builder.rfss(toInteger(mLCRFSSStatusBroadcastExplicit.getRfss()))
+                .site(toInteger(mLCRFSSStatusBroadcastExplicit.getSite()))
+                .locationRegistrationArea(toInteger(mLCRFSSStatusBroadcastExplicit.getLocationRegistrationArea()))
+                .controlChannelFrequency(getDownlinkFrequency(mLCRFSSStatusBroadcastExplicit.getChannel()));
+        }
+        else if(mAMBTCRFSSStatusBroadcast != null)
+        {
+            builder.system(toInteger(mAMBTCRFSSStatusBroadcast.getSystem()))
+                .accessCode(toInteger(mAMBTCRFSSStatusBroadcast.getNAC()))
+                .rfss(toInteger(mAMBTCRFSSStatusBroadcast.getRFSS()))
+                .site(toInteger(mAMBTCRFSSStatusBroadcast.getSite()))
+                .locationRegistrationArea(toInteger(mAMBTCRFSSStatusBroadcast.getLRA()))
+                .controlChannelFrequency(getDownlinkFrequency(mAMBTCRFSSStatusBroadcast.getChannel()));
+        }
+
+        Set<Integer> neighbors = new HashSet<>();
+        neighbors.addAll(mAMBTCNeighborSites.keySet());
+        neighbors.addAll(mLCNeighborSites.keySet());
+        neighbors.addAll(mLCNeighborSitesExplicit.keySet());
+        neighbors.addAll(mTSBKNeighborSites.keySet());
+        builder.neighborCount(neighbors.size());
+
+        mNetworkSiteInfo = builder.build();
+    }
+
+    /**
+     * Downlink frequency of the channel, or 0 when the channel or its frequency band is not known.
+     */
+    private static long getDownlinkFrequency(IChannelDescriptor channel)
+    {
+        return channel != null ? channel.getDownlinkFrequency() : 0;
     }
 
     /**

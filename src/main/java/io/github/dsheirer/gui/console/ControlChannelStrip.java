@@ -31,13 +31,15 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 
 /**
- * Control channel strip: one chip per running control channel (status dot, site, site ID, frequency, NAC and decode
- * state) and a summary of the number of talkgroups on the console.  The summary is right-aligned when everything fits
+ * Control channel strip: one chip per running control channel (status dot, site, decoded site ID, frequency, decoded
+ * network access code (P25 NAC, DMR color code or NXDN RAN) and decode quality, or the state when not decoding) and
+ * a summary of the number of talkgroups on the console.  The summary is right-aligned when everything fits
  * on one row; otherwise it flows after the chips so that the chips can wrap side by side.  Invoke all methods on the
  * JavaFX thread.
  */
 public class ControlChannelStrip extends HBox
 {
+    private static final String UNKNOWN = "\u2014";
     private final FlowPane mChips = new FlowPane(8, 6);
     private final Label mTitleLabel = ConsoleFonts.condensed(new Label("CONTROL"));
     private final Label mSummaryLabel = new Label();
@@ -188,13 +190,13 @@ public class ControlChannelStrip extends HBox
 
         if(detail.networkId() != null)
         {
-            Label nac = new Label("NAC " + detail.networkId());
+            Label nac = new Label(detail.networkId());
             nac.getStyleClass().addAll("mono", "secondary");
             chip.getChildren().add(nac);
         }
 
-        //Show the decode quality (when decoded) while decoding, otherwise the state (e.g. SEARCHING)
-        String decode = state.isDecoding() && detail.decodeQuality() != null ? detail.decodeQuality() :
+        //Show the decode quality while decoding ("—" when not yet known), otherwise the state (e.g. SEARCHING)
+        String decode = state.isDecoding() ? (detail.decodeQuality() != null ? detail.decodeQuality() : UNKNOWN) :
             state.getLabel();
         Label stateLabel = new Label(decode);
         stateLabel.getStyleClass().addAll("cc-state", "mono");
@@ -203,10 +205,12 @@ public class ControlChannelStrip extends HBox
         String tooltip = status.channelName() + " (" + status.decoder() + ")" +
             (status.system() != null ? "\nSystem: " + status.system() : "") +
             (status.site() != null ? "\nSite: " + status.site() : "") +
-            "\nState: " + state.getLabel() + (status.channelState() != null ? " (" + status.channelState() + ")" : "");
+            "\nState: " + state.getLabel() + (status.channelState() != null ? " (" + status.channelState() + ")" : "") +
+            (detail.summary() != null ? "\n\nDecoded\n" + detail.summary() : "");
         Tooltip.install(chip, new Tooltip(tooltip));
-        chip.setAccessibleText("Control channel " + status.getSiteLabel() + " " + status.getFrequencyLabel() + " " +
-            decode);
+        chip.setAccessibleText("Control channel " + status.getSiteLabel() +
+            (detail.siteId() != null ? " site " + detail.siteId() : "") + " " + status.getFrequencyLabel() + " " +
+            (state.isDecoding() && detail.decodeQuality() == null ? state.getLabel() : decode));
         return chip;
     }
 }
