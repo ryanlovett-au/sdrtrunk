@@ -26,8 +26,10 @@ import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentif
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
@@ -242,11 +244,53 @@ public class AliasModel
     }
 
     /**
+     * Retrieves the alias that has the specified unique identifier (UUID).
+     *
+     * Note: this performs a linear search across the aliases in this model.
+     *
+     * @param uuid of the alias to find
+     * @return matching alias or null if there is no alias with the unique identifier.
+     */
+    public Alias getAliasByUuid(String uuid)
+    {
+        if(uuid == null || uuid.isEmpty())
+        {
+            return null;
+        }
+
+        for(Alias alias: mAliases)
+        {
+            if(uuid.equals(alias.getUuid()))
+            {
+                return alias;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Bulk loading of aliases
      */
     public void addAliases(List<Alias> aliases)
     {
         removeAliases(aliases);
+
+        Set<String> uuids = new HashSet<>();
+
+        for(Alias alias: mAliases)
+        {
+            uuids.add(alias.getUuid());
+        }
+
+        for(Alias alias: aliases)
+        {
+            if(alias != null)
+            {
+                ensureUniqueUuid(alias, uuids);
+            }
+        }
+
         mAliases.addAll(aliases);
     }
 
@@ -260,7 +304,35 @@ public class AliasModel
             removeAlias(alias);
         }
 
+        if(alias != null)
+        {
+            Alias existing = getAliasByUuid(alias.getUuid());
+
+            if(existing != null && existing != alias)
+            {
+                mLog.warn("Alias [" + alias.getName() + "] has the same unique identifier as alias [" +
+                    existing.getName() + "] - assigning a new unique identifier");
+                alias.assignNewUuid();
+            }
+        }
+
         mAliases.add(alias);
+    }
+
+    /**
+     * Ensures that the alias has a unique identifier that is not contained in the set of identifiers, assigning a new
+     * unique identifier when necessary, and adds the alias's unique identifier to the set.
+     * @param alias to check
+     * @param uuids that are already in use
+     */
+    private void ensureUniqueUuid(Alias alias, Set<String> uuids)
+    {
+        if(!uuids.add(alias.getUuid()))
+        {
+            mLog.warn("Alias [" + alias.getName() + "] has a duplicate unique identifier - assigning a new unique " +
+                "identifier");
+            uuids.add(alias.assignNewUuid());
+        }
     }
 
     private boolean hasAliasList(String aliasListName)

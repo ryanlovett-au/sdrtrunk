@@ -25,6 +25,7 @@ import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
 import io.github.dsheirer.audio.playback.AudioPlaybackManager;
+import io.github.dsheirer.console.ConsoleLayoutManager;
 import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelAutoStartFrame;
@@ -122,7 +123,9 @@ public class SDRTrunk implements Listener<TunerEvent>
     private boolean mNowPlayingDetailsVisible;
     private AudioRecordingManager mAudioRecordingManager;
     private AudioStreamingManager mAudioStreamingManager;
+    private ApplicationWindowRegistry mApplicationWindowRegistry;
     private BroadcastStatusPanel mBroadcastStatusPanel;
+    private ConsoleLayoutManager mConsoleLayoutManager;
     private ControllerPanel mControllerPanel;
     private DiagnosticMonitor mDiagnosticMonitor;
     private IconModel mIconModel = new IconModel();
@@ -142,6 +145,8 @@ public class SDRTrunk implements Listener<TunerEvent>
 
     public SDRTrunk()
     {
+        mApplicationWindowRegistry = new ApplicationWindowRegistry(this::processShutdown, () -> System.exit(0));
+
         if(!GraphicsEnvironment.isHeadless())
         {
             //Initialize the theme manager before any Swing components are realized so the chosen
@@ -182,6 +187,9 @@ public class SDRTrunk implements Listener<TunerEvent>
         AliasModel aliasModel = new AliasModel();
         EventLogManager eventLogManager = new EventLogManager(aliasModel, mUserPreferences);
         mPlaylistManager = new PlaylistManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, mIconModel);
+
+        mConsoleLayoutManager = new ConsoleLayoutManager(mUserPreferences);
+        mConsoleLayoutManager.load();
 
         boolean headless = GraphicsEnvironment.isHeadless();
 
@@ -348,8 +356,11 @@ public class SDRTrunk implements Listener<TunerEvent>
         {
             mMainGui.setLocationRelativeTo(null);
         }
-        mMainGui.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        //Window closing is handled by the shutdown monitor which either hides the main window (when another keep-alive
+        //application window is showing) or shuts down and exits the application.
+        mMainGui.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         mMainGui.addWindowListener(new ShutdownMonitor());
+        mApplicationWindowRegistry.setMainWindow(new MainWindowControl());
 
         Dimension dimension = mUserPreferences.getSwingPreference().getDimension(WINDOW_FRAME_IDENTIFIER);
 
@@ -457,11 +468,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         fileMenu.add(new JSeparator(JSeparator.HORIZONTAL));
 
         JMenuItem exitMenu = new JMenuItem("Exit");
-        exitMenu.addActionListener(event -> {
-                processShutdown();
-                System.exit(0);
-            }
-        );
+        exitMenu.addActionListener(event -> mApplicationWindowRegistry.exitApplication());
 
         fileMenu.add(exitMenu);
 
@@ -618,7 +625,8 @@ public class SDRTrunk implements Listener<TunerEvent>
     }
 
     /**
-     * Performs shutdown operations
+     * Performs shutdown operations.  Do not invoke directly - use the application window registry exitApplication()
+     * method which ensures that shutdown is only performed once.
      */
     private void processShutdown()
     {
@@ -630,6 +638,7 @@ public class SDRTrunk implements Listener<TunerEvent>
             (mMainGui.getExtendedState() & JFrame.MAXIMIZED_BOTH) == JFrame.MAXIMIZED_BOTH);
         mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER, mSpectralPanel.getSize());
         mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER, mControllerPanel.getSize());
+        mConsoleLayoutManager.shutdown();
         mJavaFxWindowManager.shutdown();
         mLog.info("Stopping channels ...");
         mPlaylistManager.getChannelProcessingManager().shutdown();
@@ -832,12 +841,56 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
     }
 
+    /**
+     * Monitors the main window for a user close request and either hides the main window (when another keep-alive
+     * application window is showing) or shuts down and exits the application.
+     */
     public class ShutdownMonitor extends WindowAdapter
     {
         @Override
         public void windowClosing(WindowEvent e)
         {
-            processShutdown();
+            mApplicationWindowRegistry.mainWindowCloseRequested();
+        }
+    }
+
+    /**
+     * Main window controller for the application window registry.  Show and hide requests are dispatched to the Swing
+     * event dispatch thread.
+     */
+    public class MainWindowControl implements ApplicationWindowRegistry.IMainWindow
+    {
+        @Override
+        public boolean isMainWindowVisible()
+        {
+            return mMainGui != null && mMainGui.isVisible();
+        }
+
+        @Override
+        public void showMainWindow()
+        {
+            if(mMainGui != null)
+            {
+                EventQueue.invokeLater(() -> {
+                    if((mMainGui.getExtendedState() & JFrame.ICONIFIED) == JFrame.ICONIFIED)
+                    {
+                        mMainGui.setExtendedState(mMainGui.getExtendedState() & ~JFrame.ICONIFIED);
+                    }
+
+                    mMainGui.setVisible(true);
+                    mMainGui.toFront();
+                    mMainGui.requestFocus();
+                });
+            }
+        }
+
+        @Override
+        public void hideMainWindow()
+        {
+            if(mMainGui != null)
+            {
+                EventQueue.invokeLater(() -> mMainGui.setVisible(false));
+            }
         }
     }
 

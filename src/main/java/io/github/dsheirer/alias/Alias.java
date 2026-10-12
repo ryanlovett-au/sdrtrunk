@@ -34,6 +34,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.UUID;
 import javafx.beans.Observable;
 import javafx.beans.binding.Bindings;
 import javafx.beans.binding.BooleanBinding;
@@ -74,6 +75,7 @@ public class Alias
     private ObservableList<AliasID> mAliasIDs = FXCollections.observableArrayList();
     private ObservableList<AliasAction> mAliasActions = FXCollections.observableArrayList();
     private ObjectProperty<StreamAsTalkgroup> mStreamTalkgroupAlias = new SimpleObjectProperty<>();
+    private String mUuid;
 
     /**
      * Constructs an instance and sets the specified name.
@@ -219,6 +221,62 @@ public class Alias
     public String toString()
     {
         return getName();
+    }
+
+    /**
+     * Persistent unique identifier for this alias.  This value is independent of the alias name and alias list so
+     * that other components (e.g. the console) can reference this alias across renames and moves between alias lists.
+     *
+     * Note: the XML attribute is named 'uuid' because the 'id' element name is already used for the alias identifiers.
+     *
+     * A value is lazily generated on first access when one was not assigned or loaded from the playlist, so every
+     * alias always has an identifier.  Copies of an alias (see AliasFactory) are constructed with a new identifier.
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "uuid")
+    public synchronized String getUuid()
+    {
+        if(mUuid == null)
+        {
+            mUuid = UUID.randomUUID().toString();
+        }
+
+        return mUuid;
+    }
+
+    /**
+     * Sets the unique identifier for this alias.  This is normally only invoked when loading the alias from the
+     * playlist.  A null or empty value clears the identifier so that a new value is generated on next access.
+     * @param uuid to assign
+     */
+    public synchronized void setUuid(String uuid)
+    {
+        if(uuid == null || uuid.isBlank())
+        {
+            mUuid = null;
+        }
+        else
+        {
+            mUuid = uuid.trim();
+        }
+    }
+
+    /**
+     * Indicates if this alias has an assigned (or loaded) unique identifier, without generating one.  Used by the
+     * playlist updater to detect aliases loaded from a playlist that predates alias unique identifiers.
+     */
+    public synchronized boolean hasUuid()
+    {
+        return mUuid != null;
+    }
+
+    /**
+     * Assigns a newly generated unique identifier to this alias, replacing any existing identifier.
+     * @return the new unique identifier
+     */
+    public synchronized String assignNewUuid()
+    {
+        mUuid = UUID.randomUUID().toString();
+        return mUuid;
     }
 
     /**

@@ -42,8 +42,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -99,7 +101,62 @@ public class PlaylistUpdater
                 break;
         }
 
+        //Alias unique identifiers are applied independent of the playlist version since a playlist of the current
+        //version may have been created before alias unique identifiers were introduced.
+        if(assignAliasUniqueIdentifiers(playlist))
+        {
+            updated = true;
+        }
+
         return updated;
+    }
+
+    /**
+     * Assigns a unique identifier (UUID) to each alias that was loaded without one (i.e. a playlist created before
+     * alias unique identifiers were introduced) and assigns a new unique identifier to any alias that has a unique
+     * identifier that duplicates the identifier of a previous alias in the playlist (e.g. hand-edited playlist).
+     *
+     * @param playlist to update
+     * @return true if any alias was updated, indicating the playlist should be saved.
+     */
+    public static boolean assignAliasUniqueIdentifiers(PlaylistV2 playlist)
+    {
+        int assigned = 0;
+        int duplicates = 0;
+        Set<String> uuids = new HashSet<>();
+
+        for(Alias alias: playlist.getAliases())
+        {
+            if(alias == null)
+            {
+                continue;
+            }
+
+            if(!alias.hasUuid())
+            {
+                alias.assignNewUuid();
+                assigned++;
+            }
+            else if(uuids.contains(alias.getUuid()))
+            {
+                alias.assignNewUuid();
+                duplicates++;
+            }
+
+            uuids.add(alias.getUuid());
+        }
+
+        if(assigned > 0)
+        {
+            mLog.info("Assigned unique identifiers to [" + assigned + "] aliases");
+        }
+
+        if(duplicates > 0)
+        {
+            mLog.info("Assigned new unique identifiers to [" + duplicates + "] aliases that had duplicate identifiers");
+        }
+
+        return assigned > 0 || duplicates > 0;
     }
 
     /**

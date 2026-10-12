@@ -191,8 +191,18 @@ public class AliasFactory
         return null;
     }
 
+    /**
+     * Creates a copy of the original alias with the name, alias list, group, color, icon and recordable settings.
+     *
+     * Note: the copy is a new alias and is assigned a new unique identifier (UUID).  The original's unique identifier
+     * is deliberately not copied so that the copy can be distinctly referenced (e.g. by the console).
+     *
+     * @param original alias to copy
+     * @return copy of the alias.
+     */
     public static Alias shallowCopyOf(Alias original)
     {
+        //Constructing a new alias ensures the copy gets its own (new) unique identifier
         Alias copy = new Alias(original.getName());
         copy.setAliasListName(original.getAliasListName());
         copy.setGroup(original.getGroup());
@@ -226,6 +236,14 @@ public class AliasFactory
         return actions;
     }
 
+    /**
+     * Creates a deep copy of the original alias, including copies of the alias identifiers and alias actions.
+     *
+     * Note: the copy is assigned a new unique identifier (UUID) - see shallowCopyOf(Alias).
+     *
+     * @param original alias to copy
+     * @return copy of the alias.
+     */
     public static Alias copyOf(Alias original)
     {
         Alias copy = shallowCopyOf(original);
