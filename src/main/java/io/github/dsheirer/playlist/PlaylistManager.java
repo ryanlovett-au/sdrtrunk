@@ -26,6 +26,8 @@ import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastModel;
+import io.github.dsheirer.console.ConsoleCardResolver;
+import io.github.dsheirer.console.ConsoleLayoutManager;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelModel;
@@ -73,6 +75,8 @@ public class PlaylistManager implements Listener<ChannelEvent>
     private BroadcastModel mBroadcastModel;
     private ChannelModel mChannelModel;
     private ChannelProcessingManager mChannelProcessingManager;
+    private ConsoleLayoutManager mConsoleLayoutManager;
+    private ConsoleCardResolver mConsoleCardResolver;
     private TunerManager mTunerManager;
     private UserPreferences mUserPreferences;
     private RadioReference mRadioReference;
@@ -86,6 +90,9 @@ public class PlaylistManager implements Listener<ChannelEvent>
      * persisting to the current playlist file
      *
      * Monitors playlist changes to automatically save configuration changes after they occur.
+     *
+     * Also owns the console layout manager (one instance for the application lifetime) and loads the console layout
+     * for the current playlist each time the playlist is loaded or switched.
      *
      * @param userPreferences for user settings
      * @param tunerManager for access to tuner model
@@ -108,6 +115,13 @@ public class PlaylistManager implements Listener<ChannelEvent>
         mChannelProcessingManager = new ChannelProcessingManager(mChannelMapModel, eventLogManager, mTunerManager,
             mAliasModel, mUserPreferences);
 
+        //Console layout is loaded per playlist (see loadConsoleLayout()) and the card resolver provides the talkgroup
+        //filter to the traffic channel managers created by the channel processing manager.
+        mConsoleLayoutManager = new ConsoleLayoutManager();
+        mConsoleLayoutManager.setAliasModel(mAliasModel);
+        mConsoleCardResolver = new ConsoleCardResolver(mConsoleLayoutManager);
+        mChannelProcessingManager.setConsoleCardResolver(mConsoleCardResolver);
+
         //Register the channel processing manager to receive global channel stop processing requests so that it can
         //respond to tuner shutdown (ie error) events
         MyEventBus.getGlobalEventBus().register(mChannelProcessingManager);
@@ -120,6 +134,21 @@ public class PlaylistManager implements Listener<ChannelEvent>
         mChannelModel.addListener(this);
 
         mAliasModel.aliasList().addListener((ListChangeListener<Alias>)c -> schedulePlaylistSave());
+
+        //Re-bind any unlinked console cards when aliases are added after the playlist is loaded (e.g. alias import)
+        mAliasModel.aliasList().addListener((ListChangeListener<Alias>)c -> {
+            if(!mPlaylistLoading)
+            {
+                while(c.next())
+                {
+                    if(c.wasAdded())
+                    {
+                        mConsoleLayoutManager.refreshAliasBindings();
+                        return;
+                    }
+                }
+            }
+        });
 
         mChannelMapModel.getChannelMaps().addListener((ListChangeListener<ChannelMap>)c -> schedulePlaylistSave());
 
@@ -222,6 +251,23 @@ public class PlaylistManager implements Listener<ChannelEvent>
     public AliasModel getAliasModel()
     {
         return mAliasModel;
+    }
+
+    /**
+     * Console layout manager.  This is a single instance for the application lifetime that loads the console layout
+     * for the current playlist each time the playlist is loaded or switched.
+     */
+    public ConsoleLayoutManager getConsoleLayoutManager()
+    {
+        return mConsoleLayoutManager;
+    }
+
+    /**
+     * Console card resolver for the console layout managed by this playlist manager.
+     */
+    public ConsoleCardResolver getConsoleCardResolver()
+    {
+        return mConsoleCardResolver;
     }
 
     /**
@@ -402,6 +448,8 @@ public class PlaylistManager implements Listener<ChannelEvent>
 
             mAliasModel.addAliases(playlist.getAliases());
 
+            //Console layout is loaded after the aliases (for alias binding) and before the channels (talkgroup filter)
+            loadConsoleLayout();
 
             mBroadcastModel.addBroadcastConfigurations(playlist.getBroadcastConfigurations());
 
@@ -412,6 +460,18 @@ public class PlaylistManager implements Listener<ChannelEvent>
 
             mPlaylistLoading = false;
         }
+    }
+
+    /**
+     * Loads the console layout (sidecar) file for the current playlist, saving any pending changes to the previous
+     * playlist's console layout.  The legacy global console layout file is adopted once for the current playlist when
+     * the playlist does not yet have a console layout file.
+     */
+    private void loadConsoleLayout()
+    {
+        Path layoutPath = ConsoleLayoutManager.getSidecarPath(mUserPreferences.getPlaylistPreference().getPlaylist());
+        ConsoleLayoutManager.migrateLegacyLayout(ConsoleLayoutManager.getLegacyLayoutPath(mUserPreferences), layoutPath);
+        mConsoleLayoutManager.load(layoutPath);
     }
 
     /**

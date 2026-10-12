@@ -24,7 +24,11 @@ import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.console.ConsoleCardResolver;
+import io.github.dsheirer.console.ConsoleGroup;
+import io.github.dsheirer.console.ConsoleLayoutManager;
 import io.github.dsheirer.dsp.oscillator.ScalarRealOscillator;
+import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
@@ -38,11 +42,15 @@ import io.github.dsheirer.sample.Listener;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -56,6 +64,51 @@ public class AudioStreamingManagerTest
     private static final int TALKGROUP_2 = 200;
     private static final int TALKGROUP_3 = 300;
     private static final int RADIO_1 = 9999;
+
+    @TempDir
+    Path mTempDir;
+
+    @Test
+    public void testConsoleTalkgroupFilterSkipsCallsNotOnConsole() throws Exception
+    {
+        AliasList aliasList = getAliasList();
+        Alias onConsole = aliasList.getAliases(APCO25Talkgroup.create(TALKGROUP_2)).getFirst();
+
+        ConsoleLayoutManager consoleLayoutManager = new ConsoleLayoutManager(mTempDir.resolve("test.console.json"));
+        consoleLayoutManager.load();
+        consoleLayoutManager.setConsoleModeEnabled(true);
+        consoleLayoutManager.setTalkgroupFilterEnabled(true);
+        ConsoleGroup group = consoleLayoutManager.addGroup("Group");
+        consoleLayoutManager.addCard(group.getId(), onConsole.getUuid());
+
+        List<AudioRecording> recordings = new CopyOnWriteArrayList<>();
+        CountDownLatch latch = new CountDownLatch(1);
+        Listener<AudioRecording> listener = audioRecording -> {
+            recordings.add(audioRecording);
+            latch.countDown();
+        };
+
+        UserPreferences userPreferences = new UserPreferences();
+        AudioStreamingManager manager = new AudioStreamingManager(listener, BroadcastFormat.MP3, userPreferences);
+        manager.setConsoleCardResolver(new ConsoleCardResolver(consoleLayoutManager));
+        manager.start();
+
+        //Talkgroup 3 is streamable but not on the console, talkgroup 2 is streamable and on the console
+        manager.receive(getAudioSegment(aliasList, APCO25Talkgroup.create(TALKGROUP_3)));
+        manager.receive(getAudioSegment(aliasList, APCO25Talkgroup.create(TALKGROUP_2)));
+
+        boolean success = latch.await(5, TimeUnit.SECONDS);
+        Thread.sleep(500);
+        manager.stop();
+        consoleLayoutManager.saveNow();
+
+        cleanupStreamingDirectory(userPreferences.getDirectoryPreference().getDirectoryStreaming());
+
+        assertTrue(success, "Expected the call on the console to be streamed");
+        assertEquals(1, recordings.size(), "Expected only the call on the console to be streamed");
+        assertEquals(APCO25Talkgroup.create(TALKGROUP_2), recordings.getFirst().getIdentifierCollection()
+            .getToIdentifier(), "Streamed talkgroup");
+    }
 
     @Test
     public void testPatchGroupStreamingAsPatchGroup()
@@ -169,6 +222,23 @@ public class AudioStreamingManagerTest
             audioSegment.addAudio(oscillator.generate(500));
         }
         audioSegment.addIdentifier(getPatchGroup());
+        audioSegment.addIdentifier(getRadio());
+        audioSegment.completeProperty().set(true);
+        return audioSegment;
+    }
+
+    /**
+     * Creates a completed audio segment with audio for the TO identifier.
+     */
+    private static AudioSegment getAudioSegment(AliasList aliasList, Identifier to)
+    {
+        AudioSegment audioSegment = new AudioSegment(aliasList, TimeslotMessage.TIMESLOT_0);
+        ScalarRealOscillator oscillator = new ScalarRealOscillator(1000, 8000);
+        for(int x = 0; x < 10; x++)
+        {
+            audioSegment.addAudio(oscillator.generate(500));
+        }
+        audioSegment.addIdentifier(to);
         audioSegment.addIdentifier(getRadio());
         audioSegment.completeProperty().set(true);
         return audioSegment;

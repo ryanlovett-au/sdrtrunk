@@ -21,6 +21,8 @@ package io.github.dsheirer.console;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
@@ -43,13 +45,22 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
+import java.util.function.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Manages the console layout (groups of alias-bound cards and console settings) and persists the layout as JSON to
- * the console_layout.json file in the 'console' folder under the application root directory.
+ * Manages the console layout (groups of alias-bound cards and console settings) and persists the layout as JSON.
+ *
+ * Each playlist has its own console layout, stored in a sidecar file next to the playlist file (see getSidecarPath()).
+ * A single manager instance is used for the application lifetime: when a playlist is loaded or switched, load(Path)
+ * saves any pending changes for the previous layout file, loads the layout for the new playlist and broadcasts a
+ * LAYOUT_LOADED event, so listeners can hold a reference to this manager across playlist changes.
+ *
+ * Cards reference aliases by alias unique identifier (UUID) and also store a fallback alias signature.  When an alias
+ * model is registered, the layout is bound against the alias model each time it is loaded: card signatures are
+ * refreshed from the bound aliases, and a card whose alias UUID is not found is re-bound to the single alias that
+ * matches its signature (if any) or is otherwise kept unchanged as an unlinked card (see isCardLinked()).
  *
  * All modifications are made via this manager so that the following constraints are enforced:
  * - An alias may be bound to at most one card across all groups.
@@ -66,15 +77,19 @@ import org.slf4j.LoggerFactory;
 public class ConsoleLayoutManager
 {
     private final static Logger mLog = LoggerFactory.getLogger(ConsoleLayoutManager.class);
+    /**
+     * Legacy (global) console layout directory and file name, used before console layouts were stored per playlist.
+     */
     public static final String CONSOLE_DIRECTORY = "console";
     public static final String LAYOUT_FILE_NAME = "console_layout.json";
+    public static final String SIDECAR_FILE_SUFFIX = ".console.json";
+    public static final String MIGRATED_FILE_SUFFIX = ".migrated";
     public static final String DEFAULT_GROUP_NAME = "Group";
     private static final String TEMPORARY_FILE_SUFFIX = ".tmp";
     private static final String CORRUPT_FILE_SUFFIX = ".corrupt.";
     private static final long SAVE_DELAY_MS = 2000;
     private static final DateTimeFormatter CORRUPT_FILE_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
 
-    private final Supplier<Path> mLayoutPathSupplier;
     private final ObjectMapper mObjectMapper;
     private final Broadcaster<ConsoleLayoutEvent> mBroadcaster = new Broadcaster<>();
     private final Object mSaveLock = new Object();
@@ -82,16 +97,16 @@ public class ConsoleLayoutManager
     private final AtomicBoolean mSavePending = new AtomicBoolean();
     private ScheduledFuture<?> mSaveFuture;
     private ConsoleLayout mLayout = new ConsoleLayout();
+    private Path mLayoutPath;
+    private volatile AliasModel mAliasModel;
 
     /**
-     * Constructs an instance that uses the console layout file in the application root directory specified in the
-     * user preferences.  Invoke load() to load the layout from disk.
-     *
-     * @param userPreferences for resolving the application root directory
+     * Constructs an instance that has an empty layout and no layout file.  Invoke load(Path) to load the layout for a
+     * playlist.
      */
-    public ConsoleLayoutManager(UserPreferences userPreferences)
+    public ConsoleLayoutManager()
     {
-        this(() -> getDefaultLayoutPath(userPreferences));
+        this(null);
     }
 
     /**
@@ -101,16 +116,7 @@ public class ConsoleLayoutManager
      */
     public ConsoleLayoutManager(Path layoutPath)
     {
-        this(() -> layoutPath);
-    }
-
-    /**
-     * Constructs an instance
-     * @param layoutPathSupplier to resolve the layout file path at load/save time
-     */
-    private ConsoleLayoutManager(Supplier<Path> layoutPathSupplier)
-    {
-        mLayoutPathSupplier = layoutPathSupplier;
+        mLayoutPath = layoutPath;
         mObjectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
             .configure(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE, true)
@@ -118,22 +124,108 @@ public class ConsoleLayoutManager
     }
 
     /**
-     * Default console layout file path: [application root]/console/console_layout.json
+     * Legacy (global) console layout file path used before console layouts were stored per playlist:
+     * [application root]/console/console_layout.json
      * @param userPreferences for resolving the application root directory
-     * @return layout file path
+     * @return legacy layout file path
      */
-    public static Path getDefaultLayoutPath(UserPreferences userPreferences)
+    public static Path getLegacyLayoutPath(UserPreferences userPreferences)
     {
         return userPreferences.getDirectoryPreference().getDirectoryApplicationRoot().resolve(CONSOLE_DIRECTORY)
             .resolve(LAYOUT_FILE_NAME);
     }
 
     /**
-     * Current console layout file path
+     * Console layout (sidecar) file path for the playlist: the playlist file name with the file extension replaced by
+     * '.console.json', in the same directory as the playlist.  For example, playlist /path/foo.xml uses console layout
+     * file /path/foo.console.json.  A playlist file name without an extension has the suffix appended.
+     *
+     * @param playlistPath for the playlist file
+     * @return console layout file path or null if the playlist path is null.
      */
-    public Path getLayoutPath()
+    public static Path getSidecarPath(Path playlistPath)
     {
-        return mLayoutPathSupplier.get();
+        if(playlistPath == null || playlistPath.getFileName() == null)
+        {
+            return null;
+        }
+
+        String name = playlistPath.getFileName().toString();
+        int extension = name.lastIndexOf('.');
+
+        if(extension > 0)
+        {
+            name = name.substring(0, extension);
+        }
+
+        return playlistPath.resolveSibling(name + SIDECAR_FILE_SUFFIX);
+    }
+
+    /**
+     * One-time migration of the legacy (global) console layout file.  When the legacy file exists, it is copied to the
+     * layout file (adopted) if the layout file does not already exist, and the legacy file is then renamed with a
+     * '.migrated' suffix so that the migration is not repeated.
+     *
+     * @param legacyPath for the legacy console layout file
+     * @param layoutPath for the console layout file of the current playlist
+     * @return true if the legacy file was adopted as the layout file.
+     */
+    public static boolean migrateLegacyLayout(Path legacyPath, Path layoutPath)
+    {
+        if(legacyPath == null || layoutPath == null || !Files.exists(legacyPath))
+        {
+            return false;
+        }
+
+        boolean adopted = false;
+
+        try
+        {
+            if(Files.exists(layoutPath))
+            {
+                mLog.info("Legacy console layout [" + legacyPath + "] was not adopted - console layout [" + layoutPath +
+                    "] already exists");
+            }
+            else
+            {
+                if(layoutPath.getParent() != null)
+                {
+                    Files.createDirectories(layoutPath.getParent());
+                }
+
+                Files.copy(legacyPath, layoutPath);
+                adopted = true;
+                mLog.info("Legacy console layout [" + legacyPath + "] was adopted as console layout [" + layoutPath + "]");
+            }
+
+            Path migrated = legacyPath.resolveSibling(legacyPath.getFileName().toString() + MIGRATED_FILE_SUFFIX);
+            Files.move(legacyPath, migrated, StandardCopyOption.REPLACE_EXISTING);
+            mLog.info("Legacy console layout file was renamed to [" + migrated + "]");
+        }
+        catch(Exception e)
+        {
+            mLog.error("Error migrating legacy console layout [" + legacyPath + "] to [" + layoutPath + "]", e);
+        }
+
+        return adopted;
+    }
+
+    /**
+     * Current console layout file path, or null if a layout file has not been loaded.
+     */
+    public synchronized Path getLayoutPath()
+    {
+        return mLayoutPath;
+    }
+
+    /**
+     * Registers the alias model used to capture card alias signatures and to bind (and re-bind) cards to aliases
+     * when the layout is loaded.  Invoke before loading the layout.
+     * @param aliasModel containing the aliases for the current playlist, or null.
+     */
+    public void setAliasModel(AliasModel aliasModel)
+    {
+        mAliasModel = aliasModel;
     }
 
     /**
@@ -162,12 +254,38 @@ public class ConsoleLayoutManager
     }
 
     /**
-     * Loads the console layout from the layout file, replacing the current layout.  A missing file results in an empty
-     * layout.  A corrupt file is renamed (kept as a backup) and results in an empty layout.
+     * Loads the console layout from the current layout file, replacing the current layout.  A missing file results in
+     * an empty layout.  A corrupt file is renamed (kept as a backup) and results in an empty layout.
      */
     public void load()
     {
-        Path path = getLayoutPath();
+        load(getLayoutPath(), false);
+    }
+
+    /**
+     * Loads the console layout from the specified layout file and makes it the current layout file, for example when
+     * a playlist is loaded or switched.  Any pending (unsaved) changes to the current layout are first saved to the
+     * current layout file.  Broadcasts a LAYOUT_LOADED event.
+     *
+     * @param layoutPath for the layout file to load
+     */
+    public void load(Path layoutPath)
+    {
+        load(layoutPath, true);
+    }
+
+    /**
+     * Loads the console layout from the layout file, replacing the current layout and layout file.
+     * @param path for the layout file
+     * @param saveCurrent to save any pending changes for the current layout before loading
+     */
+    private void load(Path path, boolean saveCurrent)
+    {
+        if(saveCurrent)
+        {
+            saveNow();
+        }
+
         ConsoleLayout layout = null;
         boolean modified = false;
 
@@ -204,10 +322,16 @@ public class ConsoleLayoutManager
         else
         {
             modified = validate(layout);
+
+            if(bindAliases(layout, mAliasModel, true).modified())
+            {
+                modified = true;
+            }
         }
 
         synchronized(this)
         {
+            mLayoutPath = path;
             mLayout = layout;
         }
 
@@ -361,6 +485,213 @@ public class ConsoleLayoutManager
     }
 
     /**
+     * Binds the layout's cards against the aliases in the alias model.
+     *
+     * For each card whose alias unique identifier matches an alias in the model, the card's alias signature is
+     * refreshed from the alias.  For each card whose alias unique identifier is not found (unlinked), the card is
+     * re-bound to the single alias that matches the card's signature, preferring (in order) a match on alias list, alias
+     * name and talkgroup, then alias list and alias name, then alias list and talkgroup.  A card is never re-bound to
+     * an alias that is already bound to a card.  When no single matching alias is found, the card is kept unchanged.
+     *
+     * Note: this method is not thread safe - the layout must not be accessed concurrently.
+     *
+     * @param layout to bind
+     * @param aliasModel containing the aliases, or null to skip binding
+     * @param logUnlinked to log (at info level) each card that remains unlinked
+     * @return binding result
+     */
+    static BindingResult bindAliases(ConsoleLayout layout, AliasModel aliasModel, boolean logUnlinked)
+    {
+        if(aliasModel == null)
+        {
+            return new BindingResult(false, false);
+        }
+
+        boolean modified = false;
+        boolean rebound = false;
+        Set<String> boundAliasUuids = new HashSet<>();
+        List<ConsoleCard> unlinkedCards = new ArrayList<>();
+
+        for(ConsoleGroup group: layout.getGroups())
+        {
+            for(ConsoleCard card: group.getCards())
+            {
+                Alias alias = aliasModel.getAliasByUuid(card.getAliasUuid());
+
+                if(alias != null)
+                {
+                    boundAliasUuids.add(alias.getUuid());
+                    AliasSignature signature = AliasSignature.create(alias);
+
+                    if(!signature.equals(card.getSignature()))
+                    {
+                        card.setSignature(signature);
+                        modified = true;
+                    }
+                }
+                else
+                {
+                    unlinkedCards.add(card);
+                }
+            }
+        }
+
+        if(!unlinkedCards.isEmpty())
+        {
+            List<Alias> aliases = new ArrayList<>(aliasModel.getAliases());
+
+            for(ConsoleCard card: unlinkedCards)
+            {
+                Alias alias = findAlias(card.getSignature(), aliases, boundAliasUuids);
+
+                if(alias != null)
+                {
+                    mLog.info("Console card [" + card.getId() + "] alias [" + card.getAliasUuid() +
+                        "] was not found - re-binding the card by signature to alias [" + alias.getUuid() + "] " +
+                        card.getSignature());
+                    card.setAliasUuid(alias.getUuid());
+                    card.setSignature(AliasSignature.create(alias));
+                    boundAliasUuids.add(alias.getUuid());
+                    modified = true;
+                    rebound = true;
+                }
+                else if(logUnlinked)
+                {
+                    mLog.info("Console card [" + card.getId() + "] alias [" + card.getAliasUuid() + "] was not found " +
+                        "and no single alias matches the card signature " + card.getSignature() +
+                        " - the card is unlinked");
+                }
+            }
+        }
+
+        return new BindingResult(modified, rebound);
+    }
+
+    /**
+     * Finds the single alias that matches the signature and that is not already bound to a card.  Signature match
+     * criteria are evaluated in order of preference: alias list, alias name and talkgroup, then alias list and alias
+     * name, then alias list and talkgroup.  Evaluation stops at the first criteria that matches one or more aliases.
+     *
+     * @param signature to match
+     * @param aliases to search
+     * @param boundAliasUuids for aliases that are already bound to a card
+     * @return matching alias or null if no alias, or more than one alias, matches.
+     */
+    private static Alias findAlias(AliasSignature signature, List<Alias> aliases, Set<String> boundAliasUuids)
+    {
+        if(signature == null || signature.getAliasListName() == null)
+        {
+            return null;
+        }
+
+        List<Predicate<Alias>> criteria = new ArrayList<>();
+
+        if(signature.getAliasName() != null && signature.hasTalkgroup())
+        {
+            criteria.add(alias -> signature.matchesName(alias) && signature.matchesTalkgroup(alias));
+        }
+
+        if(signature.getAliasName() != null)
+        {
+            criteria.add(signature::matchesName);
+        }
+
+        if(signature.hasTalkgroup())
+        {
+            criteria.add(signature::matchesTalkgroup);
+        }
+
+        for(Predicate<Alias> criterion: criteria)
+        {
+            List<Alias> matches = new ArrayList<>();
+
+            for(Alias alias: aliases)
+            {
+                if(alias != null && !boundAliasUuids.contains(alias.getUuid()) && signature.matchesList(alias) &&
+                    criterion.test(alias))
+                {
+                    matches.add(alias);
+                }
+            }
+
+            if(matches.size() == 1)
+            {
+                return matches.getFirst();
+            }
+            else if(matches.size() > 1)
+            {
+                mLog.info("Unable to re-bind console card by signature " + signature + " - [" + matches.size() +
+                    "] aliases match the signature");
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Binds the current layout against the registered alias model: refreshes card alias signatures and re-binds
+     * unlinked cards by signature.  Invoke when aliases are added to the alias model after the layout was loaded
+     * (e.g. alias import).  Schedules a save when the layout changes and broadcasts a LAYOUT_LOADED event when any card
+     * is re-bound to a different alias.
+     */
+    public void refreshAliasBindings()
+    {
+        BindingResult result;
+
+        synchronized(this)
+        {
+            result = bindAliases(mLayout, mAliasModel, false);
+        }
+
+        if(result.modified())
+        {
+            scheduleSave();
+        }
+
+        if(result.rebound())
+        {
+            broadcast(new ConsoleLayoutEvent(ConsoleLayoutEvent.Type.LAYOUT_LOADED, null, null));
+        }
+    }
+
+    /**
+     * Indicates if the card is linked: the card's alias unique identifier matches an alias in the registered alias
+     * model.  An unlinked card is kept in the layout, but does not match any calls until it is re-bound.
+     *
+     * @param cardId to check
+     * @return true if the card exists and is bound to an alias in the alias model.
+     */
+    public boolean isCardLinked(String cardId)
+    {
+        String aliasUuid;
+
+        synchronized(this)
+        {
+            ConsoleCard card = mLayout.getCard(cardId);
+
+            if(card == null)
+            {
+                return false;
+            }
+
+            aliasUuid = card.getAliasUuid();
+        }
+
+        AliasModel aliasModel = mAliasModel;
+        return aliasModel != null && aliasModel.getAliasByUuid(aliasUuid) != null;
+    }
+
+    /**
+     * Result of binding a layout against an alias model.
+     * @param modified indicates if any card (alias or signature) was modified
+     * @param rebound indicates if any card was re-bound to a different alias
+     */
+    record BindingResult(boolean modified, boolean rebound)
+    {
+    }
+
+    /**
      * Schedules a debounced save of the layout file.  Subsequent requests are ignored until the scheduled save runs.
      */
     private void scheduleSave()
@@ -424,12 +755,19 @@ public class ConsoleLayoutManager
      */
     private void save()
     {
-        ConsoleLayout snapshot = getLayout();
-        Path path = getLayoutPath();
+        ConsoleLayout snapshot;
+        Path path;
+
+        //Capture the layout and layout file together so that a layout is never saved to another playlist's file
+        synchronized(this)
+        {
+            snapshot = mLayout.copyOf();
+            path = mLayoutPath;
+        }
 
         if(path == null)
         {
-            mLog.error("Unable to save console layout - layout file path is null");
+            mLog.warn("Unable to save console layout - a console layout file has not been loaded");
             return;
         }
 
@@ -727,6 +1065,12 @@ public class ConsoleLayoutManager
         }
 
         ConsoleCard card = new ConsoleCard(aliasUuid);
+        AliasModel aliasModel = mAliasModel;
+
+        if(aliasModel != null)
+        {
+            card.setSignature(AliasSignature.create(aliasModel.getAliasByUuid(aliasUuid)));
+        }
 
         synchronized(this)
         {

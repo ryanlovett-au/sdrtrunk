@@ -68,8 +68,9 @@ Network configuration monitors ──► structured control channel snapshot ─
 ## Phases
 
 0. **Groundwork (done):** stable alias IDs, console layout model and persistence, window lifecycle, console mode setting.
-0.5 **Layout per playlist and alias re-binding.**
-1. **Routing and filtering:** decode events and audio to cards; grant filter in each trunking protocol.
+0.5 **Layout per playlist and alias re-binding (done).**
+1. **Routing and filtering:** grant filter in each trunking protocol (done: P25 P1/P2, DMR, NXDN, MPT1327; recording and
+   streaming skip calls not on the console). Routing decode events to cards is part of phase 3.
 2. **Console mixer:** per-call volume, mute and pan, mixing and limiter.
 3. **Console window:** groups, cards, colour states, layout editing (design chosen from mockups first).
 4. **Control channel card:** structured snapshot from network configuration monitors.

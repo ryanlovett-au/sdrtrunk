@@ -1099,6 +1099,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 {
                     broadcast(tracker);
                 }
+
+                //A call ignored by the console talkgroup filter may have been added to the console mid-call.  Process
+                //the update as a channel grant so that a traffic channel is allocated.
+                if(isConsoleIgnored(tracker) && !mAllocatedTrafficChannelMap.containsKey(channel.getDownlinkFrequency())
+                    && isConsoleAllowed(ic))
+                {
+                    processP1ControlDirectedChannelGrant(channel, serviceOptions, ic, opcode, timestamp, context);
+                }
             }
             else
             {
@@ -1214,6 +1222,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     {
         long frequency = apco25Channel.getDownlinkFrequency();
 
+        //Data channel grants are not subject to the console talkgroup filter
+        boolean consoleAllowed = isDataChannelGrant || isConsoleAllowed(ic);
+
         P25ChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, P25P1Message.TIMESLOT_1, timestamp);
 
         if(tracker != null && tracker.isSameCallCheckingToOnly(ic, timestamp))
@@ -1224,7 +1235,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
                     .channelDescriptor(apco25Channel)
-                    .details("CONTINUE - PHASE 1 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""))
+                    .details(getConsoleDetails(consoleAllowed, "CONTINUE - PHASE 1 CHANNEL GRANT " +
+                        (serviceOptions != null ? serviceOptions : "")))
                     .identifiers(ic)
                     .build();
 
@@ -1240,9 +1252,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             broadcast(tracker);
 
-            //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
-            //is a traffic channel allocated.  If not, allocate one and update the event description.
-            if(!mAllocatedTrafficChannelMap.containsKey(frequency) && !(mIgnoreDataCalls && isDataChannelGrant))
+            //Even though we have a tracked event, the initial channel grant may have been rejected (or ignored by the
+            //console talkgroup filter).  Check to see if there is a traffic channel allocated.  If not, allocate one and
+            //update the event description.
+            if(!mAllocatedTrafficChannelMap.containsKey(frequency) && !(mIgnoreDataCalls && isDataChannelGrant) &&
+                consoleAllowed)
             {
                 Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
 
@@ -1284,6 +1298,21 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 broadcast(tracker);
             }
 
+            return;
+        }
+
+        //Console talkgroup filter: track and broadcast the call event, but don't allocate a traffic channel
+        if(!consoleAllowed)
+        {
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
+                .channelDescriptor(apco25Channel)
+                .details(getConsoleDetails(false, "PHASE 1 CHANNEL GRANT " +
+                    (serviceOptions != null ? serviceOptions : "")))
+                .identifiers(ic)
+                .build();
+            tracker = new P25ChannelEventTracker(event);
+            addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
+            broadcast(tracker);
             return;
         }
 
@@ -1341,6 +1370,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         long frequency = apco25Channel.getDownlinkFrequency();
         ic.setTimeslot(timeslot);
 
+        //Data channel grants are not subject to the console talkgroup filter.  The filter applies per timeslot: a
+        //filtered grant doesn't allocate the TDMA channel, but doesn't affect a channel already allocated for the
+        //other timeslot.
+        boolean consoleAllowed = isDataChannelGrant || isConsoleAllowed(ic);
+
         P25ChannelEventTracker tracker = getTrackerRemoveIfStale(apco25Channel, timestamp);
 
         if(tracker != null && tracker.isSameCallCheckingToOnly(ic, timestamp))
@@ -1351,7 +1385,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 P25ChannelGrantEvent continuationGrantEvent = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
                     .channelDescriptor(apco25Channel)
-                    .details("CONTINUE - PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""))
+                    .details(getConsoleDetails(consoleAllowed, "CONTINUE - PHASE 2 CHANNEL GRANT " +
+                        (serviceOptions != null ? serviceOptions : "")))
                     .identifiers(ic)
                     .timeslot(apco25Channel.getTimeslot())
                     .build();
@@ -1365,10 +1400,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             tracker.updateDurationControl(timestamp);
             broadcast(tracker);
 
-            //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
-            //is a traffic channel allocated.  If not, allocate one and update the event description.
+            //Even though we have a tracked event, the initial channel grant may have been rejected (or ignored by the
+            //console talkgroup filter).  Check to see if there is a traffic channel allocated.  If not, allocate one and
+            //update the event description.
             if(!mAllocatedTrafficChannelMap.containsKey(frequency) && !(mIgnoreDataCalls && isDataChannelGrant) &&
-                (getCurrentControlFrequency() != frequency))
+                (getCurrentControlFrequency() != frequency) && consoleAllowed)
             {
                 Channel trafficChannel = mAvailablePhase2TrafficChannelQueue.poll();
 
@@ -1405,13 +1441,21 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
             .channelDescriptor(apco25Channel)
-            .details("PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""))
+            .details(getConsoleDetails(consoleAllowed, "PHASE 2 CHANNEL GRANT " +
+                (serviceOptions != null ? serviceOptions : "")))
             .identifiers(ic)
             .timeslot(apco25Channel.getTimeslot())
             .build();
 
         tracker = new P25ChannelEventTracker(event);
         addTracker(tracker, frequency, timeslot);
+
+        //Console talkgroup filter: track and broadcast the call event, but don't allocate a traffic channel
+        if(!consoleAllowed)
+        {
+            broadcast(tracker);
+            return;
+        }
 
         //Allocate a traffic channel for the downlink frequency if one isn't already allocated
         if(!mAllocatedTrafficChannelMap.containsKey(frequency) && frequency != getCurrentControlFrequency())
@@ -1429,6 +1473,29 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
 
         broadcast(tracker);
+    }
+
+    /**
+     * Prefixes the call event details with the console talkgroup filter NOT_ON_CONSOLE indicator when the call is not
+     * allowed by the console talkgroup filter.
+     * @param consoleAllowed indicates if the call is allowed by the console talkgroup filter
+     * @param details for the call event
+     * @return details
+     */
+    private static String getConsoleDetails(boolean consoleAllowed, String details)
+    {
+        return consoleAllowed ? details : NOT_ON_CONSOLE + " - " + details;
+    }
+
+    /**
+     * Indicates if the tracked call event was ignored (not allocated a traffic channel) by the console talkgroup filter.
+     * @param tracker to inspect
+     * @return true if the tracked event details carry the NOT_ON_CONSOLE indicator
+     */
+    private static boolean isConsoleIgnored(P25ChannelEventTracker tracker)
+    {
+        String details = tracker.getEvent().getDetails();
+        return details != null && details.startsWith(NOT_ON_CONSOLE);
     }
 
     /**

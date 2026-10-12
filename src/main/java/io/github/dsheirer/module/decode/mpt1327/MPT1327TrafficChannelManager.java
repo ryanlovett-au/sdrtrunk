@@ -114,10 +114,17 @@ public class MPT1327TrafficChannelManager extends TrafficChannelManager implemen
             mpt1327Channel.setChannelMap(mChannelMap);
 
             MPT1327ChannelGrantEvent event = mChannelGrantEventMap.get(mpt1327Channel);
+            boolean consoleAllowed = isConsoleAllowed(identifierCollection);
 
             if(event != null)
             {
-                if(isSameTalkgroup(identifierCollection, event.getIdentifierCollection()))
+                //A call previously ignored by the console talkgroup filter that is now allowed (i.e. added to the console
+                //mid-call) is processed as a new grant so that a traffic channel is allocated.
+                boolean nowAllowed = consoleAllowed && event.getDetails() != null &&
+                    event.getDetails().startsWith(NOT_ON_CONSOLE) &&
+                    !mAllocatedTrafficChannelMap.containsKey(mpt1327Channel);
+
+                if(isSameTalkgroup(identifierCollection, event.getIdentifierCollection()) && !nowAllowed)
                 {
                     //update the ending timestamp so that the duration value is correctly calculated
                     event.end(mpt1327Message.getTimestamp());
@@ -139,7 +146,12 @@ public class MPT1327TrafficChannelManager extends TrafficChannelManager implemen
 
             mChannelGrantEventMap.put(mpt1327Channel, channelGrantEvent);
 
-            if(mpt1327Channel.getDownlinkFrequency() == 0)
+            if(!consoleAllowed)
+            {
+                //Console talkgroup filter: track the call event but don't allocate a traffic channel
+                channelGrantEvent.setDetails(NOT_ON_CONSOLE + " - " + channelGrantEvent.getDetails());
+            }
+            else if(mpt1327Channel.getDownlinkFrequency() == 0)
             {
                 channelGrantEvent.setDetails("Invalid Channel Map - No Frequency For Channel " + mpt1327Channel.getChannelNumber());
             }

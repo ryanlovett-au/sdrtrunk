@@ -20,6 +20,7 @@
 package io.github.dsheirer.record;
 
 import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.console.ConsoleCardResolver;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -57,6 +58,7 @@ public class AudioRecordingManager implements Listener<AudioSegment>
     private int mUnknownAudioRecordingIndex = 1;
     private int mDuplicateAudioRecordingSuffix = 1;
     private String mPreviousRecordingPath = null;
+    private volatile ConsoleCardResolver mConsoleCardResolver;
 
     /**
      * Constructs an instance
@@ -65,6 +67,28 @@ public class AudioRecordingManager implements Listener<AudioSegment>
     public AudioRecordingManager(UserPreferences userPreferences)
     {
         mUserPreferences = userPreferences;
+    }
+
+    /**
+     * Sets the console card resolver used to skip recording of calls that are not on the console when the console
+     * talkgroup filter is active.
+     * @param consoleCardResolver to use, or null to record without console filtering
+     */
+    public void setConsoleCardResolver(ConsoleCardResolver consoleCardResolver)
+    {
+        mConsoleCardResolver = consoleCardResolver;
+    }
+
+    /**
+     * Indicates if the audio segment is allowed by the console talkgroup filter.  This is evaluated when the segment is
+     * complete because identifiers can be added to the segment after the segment starts.
+     * @param audioSegment to check
+     * @return true if there is no console card resolver, the filter is not active, or the call is on the console.
+     */
+    private boolean isConsoleAllowed(AudioSegment audioSegment)
+    {
+        ConsoleCardResolver resolver = mConsoleCardResolver;
+        return resolver == null || resolver.isAllowed(audioSegment.getAliasList(), audioSegment.getIdentifierCollection());
     }
 
     /**
@@ -120,7 +144,7 @@ public class AudioRecordingManager implements Listener<AudioSegment>
 //            mLog.debug("Audio Segment detected with NO TO identifiers");
         }
 
-        if(audioSegment.recordAudioProperty().get())
+        if(audioSegment.recordAudioProperty().get() && isConsoleAllowed(audioSegment))
         {
             mCompletedAudioSegmentQueue.add(audioSegment);
         }

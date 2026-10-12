@@ -466,6 +466,29 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                     return;
                 }
 
+                //Console talkgroup filter: track the call event but don't allocate a traffic channel.  Each grant update
+                //is re-evaluated, so a traffic channel is allocated if the call is added to the console mid-call.
+                if(!opcode.isDataChannelGrantOpcode() && !isConsoleAllowed(identifierCollection))
+                {
+                    if(event.getDetails() == null)
+                    {
+                        event.setDetails(NOT_ON_CONSOLE);
+                    }
+                    else if(!event.getDetails().endsWith(NOT_ON_CONSOLE))
+                    {
+                        event.setDetails(event.getDetails() + " - " + NOT_ON_CONSOLE);
+                    }
+
+                    broadcast(event);
+                    return;
+                }
+                else if(event.getDetails() != null && event.getDetails().endsWith(" - " + NOT_ON_CONSOLE))
+                {
+                    //The call was previously ignored by the console talkgroup filter and is now allowed
+                    event.setDetails(event.getDetails().substring(0,
+                            event.getDetails().length() - NOT_ON_CONSOLE.length() - 3));
+                }
+
                 Channel trafficChannel = mAvailableTrafficChannels.poll();
 
                 if(trafficChannel != null)

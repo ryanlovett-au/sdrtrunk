@@ -188,8 +188,8 @@ public class SDRTrunk implements Listener<TunerEvent>
         EventLogManager eventLogManager = new EventLogManager(aliasModel, mUserPreferences);
         mPlaylistManager = new PlaylistManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, mIconModel);
 
-        mConsoleLayoutManager = new ConsoleLayoutManager(mUserPreferences);
-        mConsoleLayoutManager.load();
+        //Console layout is owned by the playlist manager and is loaded with each playlist
+        mConsoleLayoutManager = mPlaylistManager.getConsoleLayoutManager();
 
         boolean headless = GraphicsEnvironment.isHeadless();
 
@@ -211,10 +211,12 @@ public class SDRTrunk implements Listener<TunerEvent>
         AudioPlaybackManager audioPlaybackManager = new AudioPlaybackManager(mUserPreferences);
 
         mAudioRecordingManager = new AudioRecordingManager(mUserPreferences);
+        mAudioRecordingManager.setConsoleCardResolver(mPlaylistManager.getConsoleCardResolver());
         mAudioRecordingManager.start();
 
         mAudioStreamingManager = new AudioStreamingManager(mPlaylistManager.getBroadcastModel(), BroadcastFormat.MP3,
             mUserPreferences);
+        mAudioStreamingManager.setConsoleCardResolver(mPlaylistManager.getConsoleCardResolver());
         mAudioStreamingManager.start();
 
         DuplicateCallDetector duplicateCallDetector = new DuplicateCallDetector(mUserPreferences);

@@ -23,6 +23,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.console.ConsoleCardResolver;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
@@ -62,6 +63,7 @@ public class AudioStreamingManager implements Listener<AudioSegment>
     private UserPreferences mUserPreferences;
     private ScheduledFuture<?> mAudioSegmentProcessorFuture;
     private int mNextRecordingNumber = 1;
+    private volatile ConsoleCardResolver mConsoleCardResolver;
 
     /**
      * Constructs an instance
@@ -74,6 +76,28 @@ public class AudioStreamingManager implements Listener<AudioSegment>
         mAudioRecordingListener = listener;
         mBroadcastFormat = broadcastFormat;
         mUserPreferences = userPreferences;
+    }
+
+    /**
+     * Sets the console card resolver used to skip streaming of calls that are not on the console when the console
+     * talkgroup filter is active.
+     * @param consoleCardResolver to use, or null to stream without console filtering
+     */
+    public void setConsoleCardResolver(ConsoleCardResolver consoleCardResolver)
+    {
+        mConsoleCardResolver = consoleCardResolver;
+    }
+
+    /**
+     * Indicates if the audio segment is allowed by the console talkgroup filter.  This is evaluated when the segment is
+     * complete because identifiers can be added to the segment after the segment starts.
+     * @param audioSegment to check
+     * @return true if there is no console card resolver, the filter is not active, or the call is on the console.
+     */
+    private boolean isConsoleAllowed(AudioSegment audioSegment)
+    {
+        ConsoleCardResolver resolver = mConsoleCardResolver;
+        return resolver == null || resolver.isAllowed(audioSegment.getAliasList(), audioSegment.getIdentifierCollection());
     }
 
     /**
@@ -145,7 +169,8 @@ public class AudioStreamingManager implements Listener<AudioSegment>
             {
                 it.remove();
 
-                if(mAudioRecordingListener != null && audioSegment.hasBroadcastChannels())
+                if(mAudioRecordingListener != null && audioSegment.hasBroadcastChannels() &&
+                    isConsoleAllowed(audioSegment))
                 {
                     IdentifierCollection identifiers =
                             new IdentifierCollection(audioSegment.getIdentifierCollection().getIdentifiers());

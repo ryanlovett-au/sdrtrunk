@@ -533,6 +533,12 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             {
                 tracker.prefixDetails("IGNORED ENCRYPTED");
             }
+            else if(!isConsoleAllowed(ic))
+            {
+                //Console talkgroup filter: track the call event but don't allocate a traffic channel.  Each call update
+                //is re-evaluated, so a traffic channel is allocated if the call is added to the console mid-call.
+                tracker.prefixDetails(NOT_ON_CONSOLE);
+            }
             else if(!tracker.isTrafficChannelAllocated() && channel != null && channel.isValid() &&
                     channel.getDownlinkFrequency() != getCurrentControlFrequency() &&
                     !mAllocatedTrafficChannelMap.containsKey(frequency))
@@ -542,6 +548,14 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
 
                 if(traffic != null)
                 {
+                    //Remove the console talkgroup filter indicator if the call was previously ignored
+                    String details = tracker.getEvent().getDetails();
+
+                    if(details != null && details.startsWith(NOT_ON_CONSOLE))
+                    {
+                        tracker.getEvent().setDetails(details.substring(NOT_ON_CONSOLE.length()).trim());
+                    }
+
                     requestTrafficChannelStart(traffic, channel, ic, tracker);
                 }
                 else

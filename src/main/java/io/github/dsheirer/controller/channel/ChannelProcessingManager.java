@@ -25,6 +25,7 @@ import io.github.dsheirer.channel.metadata.ChannelAndMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadataModel;
 import io.github.dsheirer.channel.state.AbstractChannelState;
+import io.github.dsheirer.console.ConsoleCardResolver;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.controller.channel.event.ChannelStopProcessingRequest;
 import io.github.dsheirer.controller.channel.event.PreloadDataContent;
@@ -90,6 +91,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private EventLogManager mEventLogManager;
     private TunerManager mTunerManager;
     private AliasModel mAliasModel;
+    private ConsoleCardResolver mConsoleCardResolver;
     private UserPreferences mUserPreferences;
     private List<Long> mLoggedFrequencies = new ArrayList<>();
     private List<ScheduledFuture<?>> mDelayedChannelStartTasks = new ArrayList<>();
@@ -112,6 +114,16 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mAliasModel = aliasModel;
         mUserPreferences = userPreferences;
         mChannelMetadataModel = new ChannelMetadataModel();
+    }
+
+    /**
+     * Sets the console card resolver that is provided to the traffic channel managers of channels started after this
+     * method is invoked, to filter traffic channel allocation when the console talkgroup filter is active.
+     * @param consoleCardResolver to use, or null for no filtering
+     */
+    public void setConsoleCardResolver(ConsoleCardResolver consoleCardResolver)
+    {
+        mConsoleCardResolver = consoleCardResolver;
     }
 
     /**
@@ -462,7 +474,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         /* Processing Modules */
         List<Module> modules = DecoderFactory.getModules(mChannelMapModel, channel, mAliasModel, mUserPreferences,
-            request.getTrafficChannelManager(), request.getChannelDescriptor());
+            request.getTrafficChannelManager(), request.getChannelDescriptor(), mConsoleCardResolver);
         processingChain.addModules(modules);
 
         //Post preload data from the request to the event bus.  Modules that can handle preload data will annotate

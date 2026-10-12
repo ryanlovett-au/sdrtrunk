@@ -25,6 +25,7 @@ import io.github.dsheirer.audio.*;
 import io.github.dsheirer.audio.codec.mbe.JmbeAudioModule;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.state.State;
+import io.github.dsheirer.console.ConsoleCardResolver;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.map.ChannelMap;
@@ -141,8 +142,23 @@ public class DecoderFactory
                                           UserPreferences userPreferences, TrafficChannelManager trafficChannelManager,
                                           IChannelDescriptor channelDescriptor)
     {
+        return getModules(channelMapModel, channel, aliasModel, userPreferences, trafficChannelManager,
+                channelDescriptor, null);
+    }
+
+    /**
+     * Returns a list of one primary decoder and any auxiliary decoders, as specified in the configurations, and
+     * provides the console card resolver to any traffic channel manager created for the channel.
+     *
+     * @param consoleCardResolver for the console talkgroup filter, or null for no filtering
+     * @return list of configured decoders
+     */
+    public static List<Module> getModules(ChannelMapModel channelMapModel, Channel channel, AliasModel aliasModel,
+                                          UserPreferences userPreferences, TrafficChannelManager trafficChannelManager,
+                                          IChannelDescriptor channelDescriptor, ConsoleCardResolver consoleCardResolver)
+    {
         List<Module> modules = getPrimaryModules(channelMapModel, channel, aliasModel, userPreferences,
-                trafficChannelManager, channelDescriptor);
+                trafficChannelManager, channelDescriptor, consoleCardResolver);
         modules.addAll(getAuxiliaryDecoders(channel.getAuxDecodeConfiguration()));
         return modules;
     }
@@ -161,6 +177,28 @@ public class DecoderFactory
     public static List<Module> getPrimaryModules(ChannelMapModel channelMapModel, Channel channel, AliasModel aliasModel,
                                                  UserPreferences userPreferences, TrafficChannelManager trafficChannelManager,
                                                  IChannelDescriptor channelDescriptor)
+    {
+        return getPrimaryModules(channelMapModel, channel, aliasModel, userPreferences, trafficChannelManager,
+                channelDescriptor, null);
+    }
+
+    /**
+     * Constructs a primary decoder as specified in the decode configuration
+     *
+     * @param channelMapModel for channel map lookups
+     * @param channel configuration
+     * @param aliasModel for alias lookups
+     * @param userPreferences instance
+     * @param trafficChannelManager optional traffic channel manager to use
+     * @param channelDescriptor to preload into the decoder state as the current channel.
+     * @param consoleCardResolver for the console talkgroup filter, provided to the traffic channel manager created for
+     * a control channel along with the channel's alias list.  Null for no filtering.
+     * @return list of modules to use for a processing chain
+     */
+    public static List<Module> getPrimaryModules(ChannelMapModel channelMapModel, Channel channel, AliasModel aliasModel,
+                                                 UserPreferences userPreferences, TrafficChannelManager trafficChannelManager,
+                                                 IChannelDescriptor channelDescriptor,
+                                                 ConsoleCardResolver consoleCardResolver)
     {
         List<Module> modules = new ArrayList<>();
 
@@ -208,6 +246,19 @@ public class DecoderFactory
                 break;
             default:
                 throw new IllegalArgumentException("Unknown decoder type [" + decodeConfig.getDecoderType().toString() + "]");
+        }
+
+        //Traffic channel managers are only registered as modules for control (standard) channels.  Traffic channels
+        //reuse the control channel's traffic channel manager, which already has the console card resolver.
+        if(consoleCardResolver != null)
+        {
+            for(Module module: modules)
+            {
+                if(module instanceof TrafficChannelManager tcm)
+                {
+                    tcm.setConsoleCardResolver(consoleCardResolver, aliasList);
+                }
+            }
         }
 
         return modules;

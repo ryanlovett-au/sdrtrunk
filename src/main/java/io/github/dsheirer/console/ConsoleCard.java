@@ -32,11 +32,14 @@ import java.util.UUID;
  * samples and because it maps directly to a slider position.  Mute is independent of volume so that un-muting
  * restores the previous volume.
  *
+ * The card also stores a fallback signature of the bound alias (alias list name, alias name and first talkgroup) so
+ * that the card can be re-bound to its alias when the alias unique identifier is not found.
+ *
  * Note: this is a plain data object that is serialized as JSON.  Modifications should be made via the
  * ConsoleLayoutManager so that constraints are enforced and listeners are notified.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-@JsonPropertyOrder({"id", "aliasUuid", "volume", "muted", "pan"})
+@JsonPropertyOrder({"id", "aliasUuid", "signature", "volume", "muted", "pan"})
 public class ConsoleCard
 {
     public static final float MINIMUM_VOLUME = 0.0f;
@@ -45,6 +48,7 @@ public class ConsoleCard
 
     private String mId;
     private String mAliasUuid;
+    private AliasSignature mSignature;
     private float mVolume = DEFAULT_VOLUME;
     private boolean mMuted;
     private AudioPan mPan = AudioPan.BOTH;
@@ -74,6 +78,7 @@ public class ConsoleCard
         ConsoleCard copy = new ConsoleCard();
         copy.setId(getId());
         copy.setAliasUuid(getAliasUuid());
+        copy.setSignature(getSignature());
         copy.setVolume(getVolume());
         copy.setMuted(isMuted());
         copy.setPan(getPan());
@@ -106,6 +111,23 @@ public class ConsoleCard
     public void setAliasUuid(String aliasUuid)
     {
         mAliasUuid = aliasUuid;
+    }
+
+    /**
+     * Fallback signature of the alias that is bound to this card, or null if the signature has not been captured.
+     */
+    @JsonProperty("signature")
+    public AliasSignature getSignature()
+    {
+        return mSignature;
+    }
+
+    /**
+     * Sets the fallback signature of the alias that is bound to this card.
+     */
+    public void setSignature(AliasSignature signature)
+    {
+        mSignature = signature;
     }
 
     /**
@@ -176,7 +198,7 @@ public class ConsoleCard
     @Override
     public String toString()
     {
-        return "Console Card [" + getId() + "] alias [" + getAliasUuid() + "] volume [" + getVolume() + "] muted [" +
-            isMuted() + "] pan [" + getPan() + "]";
+        return "Console Card [" + getId() + "] alias [" + getAliasUuid() + "] signature [" + getSignature() +
+            "] volume [" + getVolume() + "] muted [" + isMuted() + "] pan [" + getPan() + "]";
     }
 }
