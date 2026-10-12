@@ -1153,6 +1153,64 @@ public class ConsoleLayoutManager
     }
 
     /**
+     * Re-binds (re-links) the card to the specified alias, for example to re-link an unlinked card whose alias was
+     * not found.  The card keeps its identifier, group position and audio settings, and its alias signature is
+     * refreshed from the alias.  Broadcasts a CARD_REBOUND event.
+     *
+     * @param cardId of the card to re-bind
+     * @param aliasUuid unique identifier of the alias to bind to the card
+     * @return true if the card was found.
+     * @throws IllegalArgumentException if the alias unique identifier is null or empty
+     * @throws IllegalStateException if the alias is already bound to a different card
+     */
+    public boolean relinkCard(String cardId, String aliasUuid)
+    {
+        if(aliasUuid == null || aliasUuid.isBlank())
+        {
+            throw new IllegalArgumentException("Alias unique identifier is required");
+        }
+
+        AliasModel aliasModel = mAliasModel;
+        AliasSignature signature = aliasModel != null ? AliasSignature.create(aliasModel.getAliasByUuid(aliasUuid)) : null;
+        ConsoleLayoutEvent event;
+
+        synchronized(this)
+        {
+            ConsoleGroup group = mLayout.getGroupForCard(cardId);
+
+            if(group == null)
+            {
+                return false;
+            }
+
+            ConsoleCard card = group.getCard(cardId);
+            ConsoleCard existing = mLayout.getCardForAlias(aliasUuid);
+
+            if(existing != null && existing != card)
+            {
+                throw new IllegalStateException("Alias [" + aliasUuid + "] is already assigned to a console card");
+            }
+
+            if(aliasUuid.equals(card.getAliasUuid()) && (signature == null || signature.equals(card.getSignature())))
+            {
+                return true;
+            }
+
+            card.setAliasUuid(aliasUuid);
+
+            if(signature != null)
+            {
+                card.setSignature(signature);
+            }
+
+            event = new ConsoleLayoutEvent(ConsoleLayoutEvent.Type.CARD_REBOUND, group.getId(), card.copyOf());
+        }
+
+        changed(event);
+        return true;
+    }
+
+    /**
      * Sets the card volume.
      * @param cardId to update
      * @param volume linear gain in the range 0.0 - 1.0 (constrained to the range)

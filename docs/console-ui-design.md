@@ -73,7 +73,10 @@ Network configuration monitors ──► structured control channel snapshot ─
    streaming skip calls not on the console). Routing decode events to cards is part of phase 3.
 2. **Console mixer (done):** per-call volume, mute and pan, per-side mixing with a peak limiter; replaces traditional
    playback while console mode is on; per-card level API for the UI.
-3. **Console window:** groups, cards, colour states, layout editing (design chosen from mockups first).
+3. **Console window (implemented, pending visual verification):** groups, cards, colour states, layout editing
+   (`gui.console`), decode event routing to cards with ACTIVE/ENCRYPTED/HANG/IDLE state, recent talkers and an
+   activity log (`console.activity.ConsoleActivityRouter`), and a control channel strip from channel configuration and
+   state (`console.control`, with `IControlChannelDetailProvider` as the phase 4 seam).
 4. **Control channel card:** structured snapshot from network configuration monitors.
 5. **Alias sheet editor:** ControlsFX `SpreadsheetView` (already a dependency): inline edit, paste from
    Excel/Sheets, fill-down, search/filter, CSV import/export, undo, duplicate/overlap highlighting, drag rows onto

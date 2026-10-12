@@ -36,6 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -372,6 +373,42 @@ public class ConsoleLayoutPlaylistTest
         assertNotNull(resolver.getCard(aliasModel.getAliasList(LIST), APCO25Talkgroup.create(100)),
             "Expected resolver to see the re-bound card");
         assertNotEquals("missing-1", manager.getCard("c1").getAliasUuid(), "Expected new uuid");
+        manager.saveNow();
+    }
+
+    @Test
+    void relinkUnlinkedCard() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        Alias alias = createAlias(LIST, "Fire Dispatch", 100);
+        Alias other = createAlias(LIST, "Fireground", 101);
+        aliasModel.addAlias(alias);
+        aliasModel.addAlias(other);
+
+        Path path = mTempDir.resolve("a.console.json");
+        writeLayout(path, card("c1", "missing-1", LIST, "Nobody", 999),
+            card("c2", other.getUuid(), LIST, "Fireground", 101));
+
+        ConsoleLayoutManager manager = new ConsoleLayoutManager(path);
+        manager.setAliasModel(aliasModel);
+        manager.load();
+        manager.setCardMuted("c1", true);
+        assertFalse(manager.isCardLinked("c1"), "Expected unlinked card");
+
+        List<ConsoleLayoutEvent> events = new ArrayList<>();
+        manager.addListener(events::add);
+
+        assertTrue(manager.relinkCard("c1", alias.getUuid()), "Expected card to be found");
+        assertTrue(manager.isCardLinked("c1"), "Expected card to be linked");
+        assertEquals(alias.getUuid(), manager.getCard("c1").getAliasUuid());
+        assertEquals("Fire Dispatch", manager.getCard("c1").getSignature().getAliasName(), "Expected new signature");
+        assertTrue(manager.getCard("c1").isMuted(), "Expected card settings to be kept");
+        assertEquals(1, events.size());
+        assertEquals(ConsoleLayoutEvent.Type.CARD_REBOUND, events.getFirst().getType());
+
+        assertThrows(IllegalStateException.class, () -> manager.relinkCard("c1", other.getUuid()),
+            "Expected alias bound to another card to be rejected");
+        assertFalse(manager.relinkCard("no-such-card", alias.getUuid()), "Expected false for unknown card");
         manager.saveNow();
     }
 }

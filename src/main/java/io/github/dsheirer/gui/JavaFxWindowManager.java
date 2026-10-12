@@ -21,9 +21,12 @@ package io.github.dsheirer.gui;
 
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.console.activity.ConsoleActivityRouter;
 import io.github.dsheirer.controller.channel.map.ChannelMap;
 import io.github.dsheirer.controller.channel.map.ChannelRange;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.console.ConsoleWindow;
+import io.github.dsheirer.gui.console.ViewConsoleRequest;
 import io.github.dsheirer.gui.icon.IconManager;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.playlist.PlaylistEditor;
@@ -94,6 +97,9 @@ public class JavaFxWindowManager extends Application
     private Stage mUserPreferencesStage;
     private Stage mRecordingViewerStage;
     private JFXPanel mStatusPanel;
+    private ApplicationWindowRegistry mApplicationWindowRegistry;
+    private ConsoleActivityRouter mConsoleActivityRouter;
+    private ConsoleWindow mConsoleWindow;
 
     /**
      * Constructs an instance.  Note: this constructor is used for Swing applications.
@@ -185,11 +191,59 @@ public class JavaFxWindowManager extends Application
     }
 
     /**
+     * Provides the services required by the radio console window.  Invoke before the console window is requested.
+     * @param applicationWindowRegistry for the console window's keep-alive lifecycle
+     * @param consoleActivityRouter providing console card activity
+     */
+    public void setConsoleServices(ApplicationWindowRegistry applicationWindowRegistry,
+                                   ConsoleActivityRouter consoleActivityRouter)
+    {
+        mApplicationWindowRegistry = applicationWindowRegistry;
+        mConsoleActivityRouter = consoleActivityRouter;
+    }
+
+    /**
+     * Processes a request to show the radio console window.
+     */
+    @Subscribe
+    public void process(final ViewConsoleRequest request)
+    {
+        if(mApplicationWindowRegistry == null || mConsoleActivityRouter == null)
+        {
+            mLog.warn("Unable to show the radio console - console services are not available");
+            return;
+        }
+
+        execute(() -> {
+            try
+            {
+                if(mConsoleWindow == null)
+                {
+                    mConsoleWindow = new ConsoleWindow(mPlaylistManager, mUserPreferences, mApplicationWindowRegistry,
+                        mConsoleActivityRouter);
+                }
+
+                mConsoleWindow.show();
+            }
+            catch(Throwable t)
+            {
+                mLog.error("Error showing the radio console window", t);
+            }
+        });
+    }
+
+    /**
      * Removes monitoring for all JavaFX stages and shuts down the FX thread, killing all FX windows.
      */
     public void shutdown()
     {
         MyEventBus.getGlobalEventBus().unregister(this);
+
+        if(mConsoleWindow != null)
+        {
+            mConsoleWindow.dispose();
+        }
+
         mUserPreferences.getJavaFxPreferences().clearStageMonitors();
         Platform.exit();
     }

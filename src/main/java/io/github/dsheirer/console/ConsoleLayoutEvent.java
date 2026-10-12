@@ -61,7 +61,11 @@ public class ConsoleLayoutEvent
         /**
          * Card moved within a group or to another group.  The group identifier is the destination group.
          */
-        CARD_MOVED
+        CARD_MOVED,
+        /**
+         * Card was re-bound (re-linked) by the user to a different alias.  The card keeps its identifier and settings.
+         */
+        CARD_REBOUND
     }
 
     private final Type mType;

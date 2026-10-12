@@ -26,6 +26,7 @@ import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
 import io.github.dsheirer.audio.playback.AudioPlaybackManager;
 import io.github.dsheirer.console.ConsoleLayoutManager;
+import io.github.dsheirer.console.activity.ConsoleActivityRouter;
 import io.github.dsheirer.console.audio.ConsoleAudioMixer;
 import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
@@ -33,6 +34,7 @@ import io.github.dsheirer.controller.channel.ChannelAutoStartFrame;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.console.ViewConsoleRequest;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.playlist.ViewPlaylistRequest;
 import io.github.dsheirer.gui.preference.CalibrateRequest;
@@ -128,6 +130,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private BroadcastStatusPanel mBroadcastStatusPanel;
     private ConsoleLayoutManager mConsoleLayoutManager;
     private ConsoleAudioMixer mConsoleAudioMixer;
+    private ConsoleActivityRouter mConsoleActivityRouter;
     private ControllerPanel mControllerPanel;
     private DiagnosticMonitor mDiagnosticMonitor;
     private IconModel mIconModel = new IconModel();
@@ -233,6 +236,17 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         MapService mapService = new MapService(aliasModel, mIconModel);
         mPlaylistManager.getChannelProcessingManager().addDecodeEventListener(mapService);
+
+        //Console activity (card state, talkers, activity log) from call events and console mixer levels
+        mConsoleActivityRouter = new ConsoleActivityRouter(mConsoleLayoutManager,
+            mPlaylistManager.getConsoleCardResolver(), aliasModel);
+        mPlaylistManager.getChannelProcessingManager().addDecodeEventListener(mConsoleActivityRouter);
+        mConsoleAudioMixer.addLevelListener(mConsoleActivityRouter.getLevelListener());
+
+        if(mJavaFxWindowManager != null)
+        {
+            mJavaFxWindowManager.setConsoleServices(mApplicationWindowRegistry, mConsoleActivityRouter);
+        }
 
         mNowPlayingDetailsVisible = mPreferences.getBoolean(PREFERENCE_NOW_PLAYING_DETAILS_VISIBLE, true);
 
@@ -486,6 +500,10 @@ public class SDRTrunk implements Listener<TunerEvent>
         viewPlaylistItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewPlaylistRequest()));
         viewMenu.add(viewPlaylistItem);
 
+        JMenuItem viewConsoleItem = new JMenuItem("Radio Console");
+        viewConsoleItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewConsoleRequest()));
+        viewMenu.add(viewConsoleItem);
+
         viewMenu.add(new JSeparator());
 
         JMenuItem viewApplicationLogsMenu = new JMenuItem("Application Log Files");
@@ -646,6 +664,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER, mSpectralPanel.getSize());
         mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER, mControllerPanel.getSize());
         mConsoleAudioMixer.dispose();
+        mConsoleActivityRouter.dispose();
         mConsoleLayoutManager.shutdown();
         mJavaFxWindowManager.shutdown();
         mLog.info("Stopping channels ...");

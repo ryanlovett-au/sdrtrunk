@@ -1,0 +1,74 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2014-2026 Dennis Sheirer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ * ****************************************************************************
+ */
+package io.github.dsheirer.console.control;
+
+/**
+ * Immutable status of a running trunking control channel, for the console control channel strip.
+ *
+ * @param channelName configured channel name
+ * @param system configured system name, or null
+ * @param site configured site name, or null
+ * @param frequency current frequency in Hertz, or 0 when unknown
+ * @param decoder decoder type label (e.g. "P25 Phase 1")
+ * @param state channel (decoder) state label (e.g. "CONTROL"), or null when unknown
+ * @param locked true when the channel is in the control state (decoding the control channel)
+ * @param detail decoded network details
+ */
+public record ControlChannelStatus(String channelName, String system, String site, long frequency, String decoder,
+                                   String state, boolean locked, ControlChannelDetail detail)
+{
+    /**
+     * Constructs an instance
+     */
+    public ControlChannelStatus
+    {
+        detail = detail != null ? detail : ControlChannelDetail.NONE;
+    }
+
+    /**
+     * Display name for the site: decoded site name, configured site name, system name or channel name.
+     */
+    public String getSiteLabel()
+    {
+        if(detail.siteName() != null && !detail.siteName().isBlank())
+        {
+            return detail.siteName();
+        }
+
+        if(site != null && !site.isBlank())
+        {
+            return site;
+        }
+
+        if(system != null && !system.isBlank())
+        {
+            return system;
+        }
+
+        return channelName;
+    }
+
+    /**
+     * Frequency formatted in MHz with 4 decimal places, or an empty string when unknown.
+     */
+    public String getFrequencyLabel()
+    {
+        return frequency > 0 ? String.format("%.4f", frequency / 1E6) : "";
+    }
+}
