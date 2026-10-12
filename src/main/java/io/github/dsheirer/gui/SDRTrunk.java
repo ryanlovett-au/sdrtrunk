@@ -37,6 +37,7 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.console.ViewConsoleRequest;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.playlist.ViewPlaylistRequest;
+import io.github.dsheirer.gui.playlist.alias.sheet.ViewAliasSheetRequest;
 import io.github.dsheirer.gui.preference.CalibrateRequest;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
@@ -503,6 +504,11 @@ public class SDRTrunk implements Listener<TunerEvent>
         JMenuItem viewConsoleItem = new JMenuItem("Radio Console");
         viewConsoleItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewConsoleRequest()));
         viewMenu.add(viewConsoleItem);
+
+        JMenuItem viewAliasSheetItem = new JMenuItem("Alias Sheet");
+        viewAliasSheetItem.setIcon(IconFontSwing.buildIcon(FontAwesome.TABLE, 12));
+        viewAliasSheetItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewAliasSheetRequest()));
+        viewMenu.add(viewAliasSheetItem);
 
         viewMenu.add(new JSeparator());
 

@@ -32,6 +32,8 @@ import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.playlist.PlaylistEditor;
 import io.github.dsheirer.gui.playlist.PlaylistEditorRequest;
 import io.github.dsheirer.gui.playlist.ViewPlaylistRequest;
+import io.github.dsheirer.gui.playlist.alias.sheet.AliasSheetEditor;
+import io.github.dsheirer.gui.playlist.alias.sheet.ViewAliasSheetRequest;
 import io.github.dsheirer.gui.playlist.channelMap.ChannelMapEditor;
 import io.github.dsheirer.gui.playlist.channelMap.ViewChannelMapEditorRequest;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
@@ -78,6 +80,7 @@ public class JavaFxWindowManager extends Application
     public static final String STAGE_MONITOR_KEY_JMBE_EDITOR = "jmbe.editor";
     public static final String STAGE_MONITOR_KEY_PLAYLIST_EDITOR = "playlist";
     public static final String STAGE_MONITOR_KEY_USER_PREFERENCES_EDITOR = "user.preferences";
+    public static final String STAGE_MONITOR_KEY_ALIAS_SHEET = "alias.sheet";
 
     private JFXPanel mJFXPanel;
     private ChannelMapEditor mChannelMapEditor;
@@ -96,6 +99,7 @@ public class JavaFxWindowManager extends Application
     private Stage mPlaylistStage;
     private Stage mUserPreferencesStage;
     private Stage mRecordingViewerStage;
+    private Stage mAliasSheetStage;
     private JFXPanel mStatusPanel;
     private ApplicationWindowRegistry mApplicationWindowRegistry;
     private ConsoleActivityRouter mConsoleActivityRouter;
@@ -510,6 +514,34 @@ public class JavaFxWindowManager extends Application
     public void process(final ViewRecordingViewerRequest request)
     {
         execute(() -> restoreStage(getRecordingViewerStage()));
+    }
+
+    /**
+     * Alias sheet stage (spreadsheet-style alias editor)
+     */
+    private Stage getAliasSheetStage()
+    {
+        if(mAliasSheetStage == null)
+        {
+            createJFXPanel();
+            Scene scene = new Scene(new AliasSheetEditor(mPlaylistManager), 1350, 750);
+            ThemeManager.getInstance().register(scene);
+            mAliasSheetStage = new Stage();
+            mAliasSheetStage.setTitle("sdrtrunk - Alias Sheet");
+            mAliasSheetStage.setScene(scene);
+            mUserPreferences.getJavaFxPreferences().monitor(mAliasSheetStage, STAGE_MONITOR_KEY_ALIAS_SHEET);
+        }
+
+        return mAliasSheetStage;
+    }
+
+    /**
+     * Process an alias sheet request
+     */
+    @Subscribe
+    public void process(final ViewAliasSheetRequest request)
+    {
+        execute(() -> restoreStage(getAliasSheetStage()));
     }
 
     /**

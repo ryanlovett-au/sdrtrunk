@@ -78,9 +78,13 @@ Network configuration monitors ──► structured control channel snapshot ─
    activity log (`console.activity.ConsoleActivityRouter`), and a control channel strip from channel configuration and
    state (`console.control`, with `IControlChannelDetailProvider` as the phase 4 seam).
 4. **Control channel card:** structured snapshot from network configuration monitors.
-5. **Alias sheet editor:** ControlsFX `SpreadsheetView` (already a dependency): inline edit, paste from
-   Excel/Sheets, fill-down, search/filter, CSV import/export, undo, duplicate/overlap highlighting, drag rows onto
-   console groups. Independent of phases 1–3.
+5. **Alias sheet editor (done, except drag rows onto console groups):** View → Alias Sheet. Inline edit, paste from
+   Excel/Sheets, fill-down, search/filter, CSV import/export, undo, duplicate/overlap highlighting, console group
+   column (adds/moves/removes the alias's card). Built on a cell-selection `TableView` rather than ControlsFX
+   `SpreadsheetView`: the SpreadsheetView skin needs a JavaFX internal package export
+   (`com.sun.javafx.scene.control.behavior`) that the launchers don't provide, and its static grid model would have
+   to be rebuilt on every alias change, sort and filter. Editing logic lives in `io.github.dsheirer.alias.sheet`
+   (testable without JavaFX controls). Independent of phases 1–3.
 
 ## Testing
 
