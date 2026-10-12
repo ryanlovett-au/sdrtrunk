@@ -503,11 +503,12 @@ public class SDRTrunk implements Listener<TunerEvent>
         viewMenu.add(viewPlaylistItem);
 
         JMenuItem viewConsoleItem = new JMenuItem("Radio Console");
+        viewConsoleItem.setIcon(new ThemedFontIcon(FontAwesome.TH_LARGE, 12));
         viewConsoleItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewConsoleRequest()));
         viewMenu.add(viewConsoleItem);
 
         JMenuItem viewAliasSheetItem = new JMenuItem("Alias Sheet");
-        viewAliasSheetItem.setIcon(IconFontSwing.buildIcon(FontAwesome.TABLE, 12));
+        viewAliasSheetItem.setIcon(new ThemedFontIcon(FontAwesome.TABLE, 12));
         viewAliasSheetItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewAliasSheetRequest()));
         viewMenu.add(viewAliasSheetItem);
 
