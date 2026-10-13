@@ -170,6 +170,14 @@ test {
     else {
         jvmArgs = jvmArgsLinux
     }
+
+    //Isolate tests from the user's real application directory (~/SDRTrunk): any test that constructs UserPreferences,
+    //PlaylistManager, etc. resolves the application root under this build-local home directory instead.
+    def testHome = layout.buildDirectory.dir('test-home').get().asFile
+    doFirst {
+        testHome.mkdirs()
+    }
+    systemProperty 'user.home', testHome.absolutePath
 }
 
 jar {
