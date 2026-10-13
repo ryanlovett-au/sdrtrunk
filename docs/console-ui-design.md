@@ -94,6 +94,17 @@ Network configuration monitors ──► structured control channel snapshot ─
    (testable without JavaFX controls). Independent of phases 1–3. Selected rows can be dragged (press on an already
    selected cell and drag) onto a console group in the console window: one card per alias, cards in other groups are
    moved (`console.ConsoleAliasDrop`, custom data format of alias UUIDs).
+   **Paste from RadioReference:** pasting a talkgroup table copied from a RadioReference.com system page (or the
+   toolbar's Paste from RadioReference… action) opens an import preview instead of pasting positionally
+   (`alias.sheet.RadioReferenceTable` detects the table by its DEC/HEX/Mode/Alpha Tag/Description/Tag header, or
+   without a header by the decimal + matching hex + mode code pattern; single-cell rows are category sub-headings).
+   Options: alias list, protocol (APCO-25), name from description/alpha tag, alias group from tag/category/none,
+   existing aliases (same list, protocol and talkgroup) skip/update, encrypted (E, TE) import/do-not-monitor/skip,
+   and console placement (one group per tag, or one named group; one card per alias, aliases already on the console
+   stay put). Applied as one undoable sheet operation (`RadioReferenceImport`, `AliasSheetModel.applyRadioReferenceImport`).
+   The alias XML has no field for the RadioReference mode, so it is not persisted: the import result lists
+   {alias UUID, mode} and the sheet model keeps it for the session (`getRadioReferenceMode`) for a later step such as
+   a console clear-audio alert for encrypted talkgroups.
 
 ## Console window menus and header
 

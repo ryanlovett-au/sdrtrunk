@@ -26,6 +26,8 @@ import io.github.dsheirer.alias.sheet.AliasSheetCsv;
 import io.github.dsheirer.alias.sheet.AliasSheetModel;
 import io.github.dsheirer.alias.sheet.AliasSheetValues;
 import io.github.dsheirer.alias.sheet.DelimitedText;
+import io.github.dsheirer.alias.sheet.RadioReferenceImport;
+import io.github.dsheirer.alias.sheet.RadioReferenceTable;
 import io.github.dsheirer.alias.sheet.SheetRange;
 import io.github.dsheirer.alias.sheet.TalkgroupConflict;
 import io.github.dsheirer.alias.sheet.TalkgroupConflictDetector;
@@ -123,6 +125,10 @@ import org.slf4j.LoggerFactory;
  * Enter commits and moves down, Tab commits and moves right, Escape cancels, Delete clears, Ctrl/Cmd+C/X/V copy, cut
  * and paste (tab separated values, compatible with Excel and Google Sheets), Ctrl/Cmd+D fills down, Ctrl/Cmd+Z undo,
  * Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z redo.
+ *
+ * Pasting a talkgroup table copied from RadioReference.com (see RadioReferenceTable) opens an import preview
+ * (RadioReferencePasteDialog) instead of pasting positionally; the toolbar's Paste from RadioReference action does the
+ * same and explains the expected format when the clipboard doesn't contain such a table.
  */
 public class AliasSheetEditor extends BorderPane
 {
@@ -266,6 +272,9 @@ public class AliasSheetEditor extends BorderPane
         mUndoButton = button("Undo", FontAwesome.UNDO, null, this::undo);
         mRedoButton = button("Redo", FontAwesome.REPEAT, null, this::redo);
         Button importButton = button("Import CSV", FontAwesome.UPLOAD, "Import aliases from a CSV file", this::importCsv);
+        Button radioReferenceButton = button("Paste from RadioReference…", FontAwesome.CLIPBOARD, "Import " +
+            "talkgroups copied from a RadioReference.com talkgroup table.\nSelect the table rows in your browser, " +
+            "copy, then click here (or paste into the sheet).", this::pasteFromRadioReference);
         Button exportButton = button("Export CSV", FontAwesome.DOWNLOAD, "Export the aliases shown in the sheet to a " +
             "CSV file", this::exportCsv);
 
@@ -281,7 +290,8 @@ public class AliasSheetEditor extends BorderPane
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         HBox toolbar = new HBox(8, title, listLabel, getAliasListComboBox(), mSearchField, spacer, addRowButton,
-            deleteButton, fillDownButton, mUndoButton, mRedoButton, importButton, exportButton, consoleButton);
+            deleteButton, fillDownButton, mUndoButton, mRedoButton, importButton, radioReferenceButton, exportButton,
+            consoleButton);
         toolbar.setAlignment(Pos.CENTER_LEFT);
         toolbar.setPadding(new Insets(10));
         return toolbar;
@@ -639,6 +649,8 @@ public class AliasSheetEditor extends BorderPane
         MenuItem paste = new MenuItem("Paste");
         paste.setAccelerator(PASTE);
         paste.setOnAction(event -> paste());
+        MenuItem pasteRadioReference = new MenuItem("Paste from RadioReference…");
+        pasteRadioReference.setOnAction(event -> pasteFromRadioReference());
         MenuItem fillDown = new MenuItem("Fill down");
         fillDown.setAccelerator(FILL_DOWN);
         fillDown.setOnAction(event -> fillDown());
@@ -662,7 +674,7 @@ public class AliasSheetEditor extends BorderPane
         populateConsoleMenu(console.getItems());
         console.setDisable(mModel.getConsoleLayoutManager() == null);
 
-        return new ContextMenu(copy, cut, paste, new SeparatorMenuItem(), fillDown, clear, new SeparatorMenuItem(),
+        return new ContextMenu(copy, cut, paste, pasteRadioReference, new SeparatorMenuItem(), fillDown, clear, new SeparatorMenuItem(),
             addRow, delete, new SeparatorMenuItem(), console, open);
     }
 
@@ -1067,6 +1079,16 @@ public class AliasSheetEditor extends BorderPane
         }
 
         List<List<String>> data = DelimitedText.parseTsv(text);
+
+        //A talkgroup table copied from RadioReference.com is imported with a preview instead of pasted positionally
+        RadioReferenceTable radioReferenceTable = RadioReferenceTable.parse(data);
+
+        if(radioReferenceTable.isRecognised())
+        {
+            importRadioReference(radioReferenceTable);
+            return;
+        }
+
         SheetRange selection = getSelectedRange();
         AliasSheetModel.PasteResult result = mModel.paste(getViewRows(), getViewColumns(), selection, data,
             getNewRowAliasList());
@@ -1096,6 +1118,79 @@ public class AliasSheetEditor extends BorderPane
 
         SheetRange pasted = result.range();
         Platform.runLater(() -> selectRange(pasted));
+    }
+
+    /**
+     * Reads a RadioReference.com talkgroup table from the clipboard and imports it with a preview.
+     */
+    private void pasteFromRadioReference()
+    {
+        String text = Clipboard.getSystemClipboard().getString();
+        RadioReferenceTable table = text != null ? RadioReferenceTable.parse(text) : null;
+
+        if(table == null || !table.isRecognised())
+        {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION, (text == null || text.isBlank() ?
+                "The clipboard does not contain text." : "The clipboard does not contain a RadioReference " +
+                "talkgroup table.") + "\n\nOpen the trunked system's page on RadioReference.com, select the " +
+                "talkgroup table (from the DEC/HEX/Mode header row down to the last talkgroup - several category " +
+                "tables can be selected at once), copy it (Ctrl/⌘+C) and try again.\n\nExpected columns: DEC, HEX, " +
+                "Mode, Alpha Tag, Description, Tag.", ButtonType.OK);
+            alert.setTitle("Paste from RadioReference");
+            alert.setHeaderText("No RadioReference talkgroups found");
+            alert.initOwner(getScene().getWindow());
+            alert.showAndWait();
+            return;
+        }
+
+        importRadioReference(table);
+    }
+
+    /**
+     * Shows the RadioReference import preview for the table and applies the import as a single undoable operation.
+     */
+    private void importRadioReference(RadioReferenceTable table)
+    {
+        List<String> listNames = new ArrayList<>(getAliasModel().aliasListNames().stream()
+            .filter(name -> name != null && !name.equals(AliasModel.NO_ALIAS_LIST)).toList());
+        listNames.sort(String.CASE_INSENSITIVE_ORDER);
+
+        RadioReferencePasteDialog dialog = new RadioReferencePasteDialog(getScene().getWindow(), mModel, table,
+            listNames, getNewRowAliasList());
+        Optional<RadioReferenceImport.Plan> plan = dialog.showAndWait();
+
+        if(plan.isEmpty())
+        {
+            return;
+        }
+
+        RadioReferenceImport.Result result;
+
+        try
+        {
+            result = mModel.applyRadioReferenceImport(plan.get());
+        }
+        catch(Exception e)
+        {
+            mLog.error("Error applying RadioReference talkgroup import", e);
+            showError("Unable to import the RadioReference talkgroups: " + e.getMessage());
+            return;
+        }
+
+        //Show the alias list that received the aliases
+        String selected = getSelectedAliasList();
+        String target = plan.get().getAliasList();
+
+        if(selected != null && target != null && !selected.equals(target))
+        {
+            updateAliasListChoices();
+            getAliasListComboBox().getSelectionModel().select(target);
+        }
+
+        refresh();
+        int conflicts = mConflictReport.getConflictsForList(target).size();
+        setStatus("RadioReference: " + result.getSummary() + (conflicts > 0 ? " - " + conflicts + " talkgroup " +
+            "conflict" + (conflicts == 1 ? "" : "s") + " (see banner)" : ""));
     }
 
     /**

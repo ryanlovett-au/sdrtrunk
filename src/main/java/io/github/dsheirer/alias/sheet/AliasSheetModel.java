@@ -25,6 +25,7 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
@@ -92,6 +93,7 @@ public class AliasSheetModel
     private final Map<String,Map<AliasSheetColumn,InvalidValue>> mInvalidValues = new HashMap<>();
     private final Map<String,Protocol> mPendingProtocols = new HashMap<>();
     private final Map<String,ConsoleCard> mRemovedCards = new HashMap<>();
+    private final Map<String,RadioReferenceMode> mRadioReferenceModes = new HashMap<>();
     private Supplier<Collection<String>> mIconNameSupplier;
     private Supplier<Collection<String>> mBroadcastChannelSupplier;
     private Map<String,ConsoleAssignment> mConsoleAssignments;
@@ -162,6 +164,7 @@ public class AliasSheetModel
         mInvalidValues.clear();
         mPendingProtocols.clear();
         mRemovedCards.clear();
+        mRadioReferenceModes.clear();
         mConsoleAssignmentsValid = false;
     }
 
@@ -1032,6 +1035,147 @@ public class AliasSheetModel
         }
 
         return changes.size();
+    }
+
+    /**
+     * Applies a RadioReference talkgroup import plan (see RadioReferenceImport) as a single undoable operation: adds
+     * the new aliases, updates the name and group of existing aliases and adds console cards (creating console groups
+     * that don't exist).  Undo removes the added aliases and their cards, restores the updated names and groups, and
+     * removes the console groups that were created by the import (when they are empty).
+     *
+     * The RadioReference mode of each added, updated or duplicate alias is returned in the result and retained for the
+     * session (see getRadioReferenceMode()); it is not saved in the playlist.
+     *
+     * @param plan to apply
+     * @return result of the import
+     */
+    public RadioReferenceImport.Result applyRadioReferenceImport(RadioReferenceImport.Plan plan)
+    {
+        if(!plan.canApply())
+        {
+            return new RadioReferenceImport.Result(0, 0, plan.getRows().size(), 0, List.of(), List.of());
+        }
+
+        String description = "paste from RadioReference";
+        Protocol protocol = plan.getOptions().getProtocol();
+        String aliasList = toModelListName(plan.getAliasList());
+        List<String> createdGroups = new ArrayList<>();
+
+        if(mConsoleLayoutManager != null)
+        {
+            for(String group: plan.getNewConsoleGroups())
+            {
+                if(findConsoleGroup(group) == null)
+                {
+                    createdGroups.add(group);
+                }
+            }
+        }
+
+        List<Alias> added = new ArrayList<>();
+        List<CellEdit> edits = new ArrayList<>();
+        List<RadioReferenceImport.ModeAssignment> modes = new ArrayList<>();
+        int updated = 0;
+        int skipped = 0;
+
+        for(RadioReferenceImport.PlannedRow row: plan.getRows())
+        {
+            Alias alias = null;
+
+            switch(row.action())
+            {
+                case ADD:
+                    alias = new Alias(row.name());
+                    alias.setAliasListName(aliasList);
+                    alias.setGroup(row.group().isEmpty() ? null : row.group());
+                    alias.addAliasID(new Talkgroup(protocol, row.source().talkgroup()));
+
+                    if(row.doNotMonitor())
+                    {
+                        alias.setCallPriority(Priority.DO_NOT_MONITOR);
+                    }
+
+                    added.add(alias);
+                    break;
+                case UPDATE:
+                    alias = row.existing();
+                    edits.add(new CellEdit(alias, AliasSheetColumn.NAME, row.name()));
+                    edits.add(new CellEdit(alias, AliasSheetColumn.GROUP, row.group()));
+                    updated++;
+                    break;
+                case SKIP_DUPLICATE:
+                case SKIP_UNCHANGED:
+                    //Same talkgroup: the mode applies to the existing alias
+                    alias = row.existing();
+                    skipped++;
+                    break;
+                default:
+                    skipped++;
+                    break;
+            }
+
+            if(alias != null && !row.action().isSkipped() && row.consoleGroup() != null &&
+                mConsoleLayoutManager != null)
+            {
+                edits.add(new CellEdit(alias, AliasSheetColumn.CONSOLE_GROUP, row.consoleGroup()));
+            }
+
+            if(alias != null && row.source().mode() != null)
+            {
+                modes.add(new RadioReferenceImport.ModeAssignment(alias.getUuid(), row.source().mode()));
+            }
+        }
+
+        //The created groups edit is first so that it is undone last, after the cards were removed from the groups
+        SheetUndoStack.CompoundEdit compound = new SheetUndoStack.CompoundEdit(description);
+
+        if(!createdGroups.isEmpty())
+        {
+            compound.add(new CreatedConsoleGroupsEdit(createdGroups));
+        }
+
+        if(!added.isEmpty())
+        {
+            compound.add(addAliases(added));
+        }
+
+        List<CellChange> changes = applyCellEdits(edits);
+
+        if(!changes.isEmpty())
+        {
+            compound.add(new CellChangesEdit(description, changes));
+        }
+
+        if(!added.isEmpty() || !changes.isEmpty())
+        {
+            mUndoStack.push(compound);
+        }
+
+        int cards = (int)changes.stream().filter(change -> change.column() == AliasSheetColumn.CONSOLE_GROUP).count();
+
+        for(RadioReferenceImport.ModeAssignment assignment: modes)
+        {
+            mRadioReferenceModes.put(assignment.aliasUuid(), assignment.mode());
+        }
+
+        return new RadioReferenceImport.Result(added.size(), updated, skipped, cards, List.copyOf(createdGroups),
+            List.copyOf(modes));
+    }
+
+    /**
+     * RadioReference talkgroup mode recorded for the alias by a RadioReference import during this session, or null.
+     */
+    public RadioReferenceMode getRadioReferenceMode(Alias alias)
+    {
+        return alias != null ? mRadioReferenceModes.get(alias.getUuid()) : null;
+    }
+
+    /**
+     * RadioReference talkgroup modes recorded by RadioReference imports during this session, by alias UUID.
+     */
+    public Map<String,RadioReferenceMode> getRadioReferenceModes()
+    {
+        return Map.copyOf(mRadioReferenceModes);
     }
 
     /**
@@ -1982,6 +2126,51 @@ public class AliasSheetModel
         public void redo()
         {
             mAliasModel.addAliases(mAliases);
+        }
+    }
+
+    /**
+     * Removes the console groups that were created by an operation when the operation is undone (when the groups are
+     * empty by then).  The groups are re-created (by name) when the operation's console group cell changes are redone.
+     */
+    private class CreatedConsoleGroupsEdit implements SheetUndoStack.Edit
+    {
+        private final List<String> mGroupNames;
+
+        CreatedConsoleGroupsEdit(List<String> groupNames)
+        {
+            mGroupNames = new ArrayList<>(groupNames);
+        }
+
+        @Override
+        public String getDescription()
+        {
+            return "create console groups";
+        }
+
+        @Override
+        public void undo()
+        {
+            if(mConsoleLayoutManager == null)
+            {
+                return;
+            }
+
+            for(String name: mGroupNames)
+            {
+                ConsoleGroup group = findConsoleGroup(name);
+
+                if(group != null && group.getCards().isEmpty())
+                {
+                    mConsoleLayoutManager.removeGroup(group.getId());
+                }
+            }
+        }
+
+        @Override
+        public void redo()
+        {
+            //Groups are re-created by the console group cell changes
         }
     }
 
