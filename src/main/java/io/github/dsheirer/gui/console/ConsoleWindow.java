@@ -55,6 +55,7 @@ import java.net.URL;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -121,11 +122,19 @@ import org.slf4j.LoggerFactory;
  * so closing the main window hides it (instead of exiting) while the console is showing, and closing the console
  * exits the application when the main window is hidden.
  *
+ * Groups are laid out in masonry columns (ConsoleColumnPane): each group in the shortest column in display order, so
+ * that the columns pack without row gaps.  A group can span several columns or the full width.
+ *
  * Updates: card activity is pulled from the ConsoleActivityRouter as an immutable snapshot by a 10 Hz timeline while
- * the window is showing (call events are never dispatched to the JavaFX thread individually).  Console layout changes
- * are received from the ConsoleLayoutManager: card setting changes update the affected card and all other changes
- * (including LAYOUT_LOADED on playlist switch) rebuild the groups and cards, except group collapsed/muted changes,
- * which update the group in place.  Layout edits are applied via the ConsoleLayoutManager.
+ * the window is showing (call events are never dispatched to the JavaFX thread individually).  Only the cards whose
+ * activity changed are updated (the router reuses the activity instances of unchanged cards).  Console layout changes
+ * are received from the ConsoleLayoutManager: card setting changes (including encryption learning after each call) and
+ * card re-binding update the affected card in place, group collapsed/muted/span changes update the group in place, and
+ * all other changes (including LAYOUT_LOADED on playlist switch) synchronise the groups and cards with the layout,
+ * reusing the existing group and card views (only new cards get new views).  Card views are only created for expanded
+ * groups: collapsing a group releases its card views, and expanding it creates them.  Per-card display values that do
+ * not need a card view (alias name and colour) are kept for every card (CardInfo), for the collapsed group summaries
+ * and the activity log.  Layout edits are applied via the ConsoleLayoutManager.
  *
  * Invoke all methods on the JavaFX application thread, except dispose() and isKeepAliveWindowShowing().
  */
@@ -138,6 +147,11 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     private static final Duration REFRESH_INTERVAL = Duration.millis(100);
     private static final double MINIMUM_COLUMN_WIDTH = 300;
     private static final double COLUMN_GAP = 12;
+    /**
+     * Horizontal gap between the card columns of a group that spans several columns: the column gap plus the group's
+     * borders (1 px) and card area padding (8 px), so that the cards line up with the cards of single column groups.
+     */
+    private static final double CARD_COLUMN_GAP = COLUMN_GAP + 2 * 8 + 2 * 1;
     private static final long[] HANG_TIME_OPTIONS_MS = {0, 1000, 2000, 3000, 5000, 10000};
     private static final DateTimeFormatter CLOCK_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
 
@@ -153,8 +167,11 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     private final ListChangeListener<Alias> mAliasListener = change -> mAliasesChanged = true;
     private final AtomicBoolean mRebuildPending = new AtomicBoolean();
     private final AtomicBoolean mSettingsPending = new AtomicBoolean();
-    private final Map<String,ConsoleGroupView> mGroupViews = new LinkedHashMap<>();
-    private final Map<String,ConsoleCardView> mCardViews = new LinkedHashMap<>();
+    private final Map<String,Tooltip> mTooltips = new HashMap<>();
+    private Map<String,ConsoleGroupView> mGroupViews = new LinkedHashMap<>();
+    private Map<String,ConsoleCardView> mCardViews = new LinkedHashMap<>();
+    private Map<String,CardInfo> mCardInfos = new HashMap<>();
+    private ConsoleActivitySnapshot mSnapshot;
     private volatile boolean mShowing;
     private String mStylesheet;
     private String mMenuStylesheet;
@@ -336,8 +353,17 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
                 mRoot.getStyleClass().add(ConsoleCardColors.Palette.DARK_STYLE_CLASS);
             }
 
-            rebuild();
+            rebuild(true);
         }
+    }
+
+    /**
+     * Shared tooltip with the text: tooltips are created once per text and installed on every node that uses the text
+     * (a tooltip creates its own popup scene, so a tooltip per card control is a significant part of a card's size).
+     */
+    Tooltip getTooltip(String text)
+    {
+        return mTooltips.computeIfAbsent(text, Tooltip::new);
     }
 
     /**
@@ -429,7 +455,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         MyEventBus.getGlobalEventBus().register(mThemeListener);
         updateMenuTheme();
         mAliasModel.aliasList().addListener(mAliasListener);
-        rebuild();
+        rebuild(true);
     }
 
     /**
@@ -709,6 +735,13 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
                     runOnFxThread(this::updateSettings);
                 }
             }
+            case CARD_REBOUND ->
+            {
+                if(event.hasCard())
+                {
+                    runOnFxThread(() -> cardRebound(event.getCard()));
+                }
+            }
             case GROUP_STATE_CHANGED -> runOnFxThread(() -> groupStateChanged(event.getGroupId()));
             default ->
             {
@@ -741,12 +774,11 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
      */
     private void cardChanged(ConsoleCard card)
     {
-        ConsoleGroup group = mLayout.getGroupForCard(card.getId());
+        CardInfo previous = mCardInfos.get(card.getId());
 
-        if(group != null)
+        if(!replaceCard(card))
         {
-            int index = group.getCards().indexOf(group.getCard(card.getId()));
-            group.getCards().set(index, card);
+            return;
         }
 
         ConsoleCardView view = mCardViews.get(card.getId());
@@ -755,10 +787,73 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         {
             view.setCard(card);
         }
+
+        //The card's mute setting is shown in its group's summary (RX MUTED)
+        if(previous != null && previous.card().isMuted() != card.isMuted() && mSnapshot != null)
+        {
+            updateActivity(mSnapshot, true);
+        }
     }
 
     /**
-     * Updates the group view, its card views and the layout snapshot for a group collapsed or muted state change.
+     * Updates the card view, the card's display values and the layout snapshot for a card that was re-bound to another
+     * alias (the card keeps its identifier, group and settings).
+     */
+    private void cardRebound(ConsoleCard card)
+    {
+        if(!replaceCard(card))
+        {
+            return;
+        }
+
+        CardInfo info = mCardInfos.get(card.getId());
+
+        if(info != null)
+        {
+            Alias alias = mAliasModel.getAliasByUuid(card.getAliasUuid());
+            mCardInfos.put(card.getId(), createCardInfo(card, info.groupId(), alias));
+        }
+
+        ConsoleCardView view = mCardViews.get(card.getId());
+
+        if(view != null)
+        {
+            view.setCard(card);
+            view.setAliasInfo(mCardInfos.get(card.getId()).aliasInfo());
+        }
+
+        refreshGroupSummaries();
+        mActivityLogView.refresh();
+    }
+
+    /**
+     * Replaces the card in the layout snapshot and in the card's display values.
+     * @return true if the card is in the layout snapshot.
+     */
+    private boolean replaceCard(ConsoleCard card)
+    {
+        ConsoleGroup group = mLayout.getGroupForCard(card.getId());
+
+        if(group == null)
+        {
+            return false;
+        }
+
+        int index = group.getCards().indexOf(group.getCard(card.getId()));
+        group.getCards().set(index, card);
+        CardInfo info = mCardInfos.get(card.getId());
+
+        if(info != null)
+        {
+            mCardInfos.put(card.getId(), new CardInfo(card, info.groupId(), info.aliasInfo(), info.baseColor()));
+        }
+
+        return true;
+    }
+
+    /**
+     * Updates the group view, its card views and the layout snapshot for a group collapsed, muted or column span
+     * change.  Expanding a group creates its card views and collapsing a group releases them.
      */
     private void groupStateChanged(String groupId)
     {
@@ -770,8 +865,15 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
             return;
         }
 
+        boolean wasCollapsed = groupView.getGroup().isCollapsed();
+
         //The group view holds the layout snapshot's group, so this also updates the layout snapshot
-        groupView.setGroupState(current.isCollapsed(), current.isMuted());
+        groupView.setGroupState(current.isCollapsed(), current.isMuted(), current.getColumnSpan());
+
+        if(wasCollapsed != current.isCollapsed())
+        {
+            groupView.setCardViews(createCardViews(groupView.getGroup()), mEditMode);
+        }
 
         for(ConsoleCard card: groupView.getGroup().getCards())
         {
@@ -783,13 +885,72 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
             }
         }
 
-        updateActivity(mActivityRouter.getSnapshot());
+        updateActivity(mActivityRouter.getSnapshot(), true);
     }
 
     /**
-     * Rebuilds the groups and cards from a snapshot of the console layout.
+     * Card views for the group's cards (none for a collapsed group), reusing the existing card views.  The card views
+     * of a collapsed group are removed.
+     */
+    private List<ConsoleCardView> createCardViews(ConsoleGroup group)
+    {
+        List<ConsoleCardView> cardViews = new ArrayList<>();
+
+        for(ConsoleCard card: group.getCards())
+        {
+            if(group.isCollapsed())
+            {
+                mCardViews.remove(card.getId());
+                continue;
+            }
+
+            ConsoleCardView cardView = mCardViews.get(card.getId());
+            CardInfo info = mCardInfos.get(card.getId());
+
+            if(cardView == null)
+            {
+                cardView = new ConsoleCardView(this, card, group.getId());
+                mCardViews.put(card.getId(), cardView);
+
+                if(mSnapshot != null)
+                {
+                    cardView.setActivity(mSnapshot.getCard(card.getId()));
+                }
+            }
+            else
+            {
+                cardView.setGroupId(group.getId());
+                cardView.setCard(card);
+            }
+
+            if(info != null)
+            {
+                cardView.setAliasInfo(info.aliasInfo());
+            }
+
+            cardView.setEditMode(mEditMode);
+            cardView.setGroupMuted(group.isMuted());
+            cardViews.add(cardView);
+        }
+
+        return cardViews;
+    }
+
+    /**
+     * Synchronises the groups and cards with a snapshot of the console layout, reusing the existing group and card
+     * views.
      */
     private void rebuild()
+    {
+        rebuild(false);
+    }
+
+    /**
+     * Synchronises the groups and cards with a snapshot of the console layout.
+     * @param recreate true to discard the existing group and card views (e.g. for a palette change), false to reuse
+     * them: views are only created for new groups and for the cards of expanded groups that do not have a view.
+     */
+    private void rebuild(boolean recreate)
     {
         mRebuildPending.set(false);
 
@@ -798,36 +959,67 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
             return;
         }
 
+        if(recreate)
+        {
+            mGroupViews.clear();
+            mCardViews.clear();
+        }
+
         mLayout = mLayoutManager.getLayout();
-        mGroupViews.clear();
-        mCardViews.clear();
-        List<ConsoleGroupView> groupViews = new ArrayList<>();
+        Map<String,Alias> aliases = getAliasIndex();
+        Map<String,CardInfo> cardInfos = new HashMap<>();
+        Map<String,ConsoleGroupView> groupViews = new LinkedHashMap<>();
+        Map<String,ConsoleCardView> previousCardViews = mCardViews;
+        mCardViews = new LinkedHashMap<>();
         int groupCount = mLayout.getGroups().size();
 
         for(ConsoleGroup group: mLayout.getGroups())
         {
-            ConsoleGroupView groupView = new ConsoleGroupView(this, group, groupCount);
-            List<ConsoleCardView> cardViews = new ArrayList<>();
-
             for(ConsoleCard card: group.getCards())
             {
-                ConsoleCardView cardView = new ConsoleCardView(this, card, group.getId());
-                cardView.setAliasInfo(getAliasInfo(card));
-                cardView.setEditMode(mEditMode);
-                cardView.setGroupMuted(group.isMuted());
-                mCardViews.put(card.getId(), cardView);
-                cardViews.add(cardView);
-            }
+                cardInfos.put(card.getId(), createCardInfo(card, group.getId(), aliases.get(card.getAliasUuid())));
 
-            groupView.setCardViews(cardViews, mEditMode);
-            mGroupViews.put(group.getId(), groupView);
-            groupViews.add(groupView);
+                //Reuse the card's view when the group is expanded
+                ConsoleCardView cardView = previousCardViews.get(card.getId());
+
+                if(cardView != null && !group.isCollapsed())
+                {
+                    mCardViews.put(card.getId(), cardView);
+                }
+            }
         }
 
-        mGroupsPane.getChildren().setAll(groupViews);
+        mCardInfos = cardInfos;
+
+        for(ConsoleGroup group: mLayout.getGroups())
+        {
+            ConsoleGroupView groupView = mGroupViews.get(group.getId());
+
+            if(groupView == null)
+            {
+                groupView = new ConsoleGroupView(this, group, groupCount, CARD_COLUMN_GAP);
+            }
+            else
+            {
+                groupView.setGroup(group, groupCount);
+            }
+
+            groupView.setCardViews(createCardViews(group), mEditMode);
+            groupView.refreshSummary();
+            groupViews.put(group.getId(), groupView);
+        }
+
+        mGroupViews = groupViews;
+        List<ConsoleGroupView> ordered = new ArrayList<>(groupViews.values());
+
+        if(!mGroupsPane.getChildren().equals(ordered))
+        {
+            mGroupsPane.getChildren().setAll(ordered);
+        }
+
         mAliasesChanged = false;
         updateSettings();
-        updateActivity(mActivityRouter.getSnapshot());
+        updateActivity(mActivityRouter.getSnapshot(), true);
         mActivityLogView.refresh();
     }
 
@@ -995,38 +1187,32 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
      */
     private void updateActivity(ConsoleActivitySnapshot snapshot)
     {
-        for(ConsoleCardView cardView: mCardViews.values())
-        {
-            cardView.setActivity(snapshot.getCard(cardView.getCardId()));
-        }
+        updateActivity(snapshot, false);
+    }
 
-        for(ConsoleGroup group: mLayout.getGroups())
-        {
-            ConsoleGroupView groupView = mGroupViews.get(group.getId());
+    /**
+     * Applies the activity snapshot to the cards, group active counts, collapsed group activity summaries and the
+     * activity log.
+     * @param snapshot to apply
+     * @param force true to apply the snapshot to every card and group (e.g. after the cards changed), false to skip
+     * the cards and groups when the snapshot's card activity is the same as the previous snapshot's
+     */
+    private void updateActivity(ConsoleActivitySnapshot snapshot, boolean force)
+    {
+        boolean cardsChanged = force || mSnapshot == null || mSnapshot.cards() != snapshot.cards();
+        mSnapshot = snapshot;
 
-            if(groupView != null)
+        if(cardsChanged)
+        {
+            for(ConsoleCardView cardView: mCardViews.values())
             {
-                int active = 0;
+                cardView.setActivity(snapshot.getCard(cardView.getCardId()));
+            }
 
-                for(ConsoleCard card: group.getCards())
-                {
-                    ConsoleCardView cardView = mCardViews.get(card.getId());
-
-                    if(cardView != null && cardView.isInProgress())
-                    {
-                        active++;
-                    }
-                }
-
-                groupView.setActiveCount(active);
-
-                if(group.isCollapsed())
-                {
-                    ConsoleGroupActivity summary = ConsoleGroupActivity.of(group.getCards().stream()
-                        .map(ConsoleCard::getId).toList(), snapshot, this::getCardName, this::isCardAudioMuted);
-                    ConsoleCardView featured = summary.cardId() != null ? mCardViews.get(summary.cardId()) : null;
-                    groupView.setActivity(summary, featured != null ? featured.getBaseColor() : 0);
-                }
+            for(ConsoleGroupView groupView: mGroupViews.values())
+            {
+                groupView.setActivity(ConsoleGroupActivity.of(groupView.getCardIds(), snapshot, this::getCardName,
+                    this::isCardAudioMuted));
             }
         }
 
@@ -1034,12 +1220,38 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     }
 
     /**
+     * Refreshes the colours of the collapsed group summaries (e.g. after alias colour changes).
+     */
+    private void refreshGroupSummaries()
+    {
+        for(ConsoleGroupView groupView: mGroupViews.values())
+        {
+            groupView.refreshSummary();
+        }
+
+        if(mSnapshot != null)
+        {
+            updateActivity(mSnapshot, true);
+        }
+    }
+
+    /**
      * Display name of the card, or null when the card is not on the console.
      */
     private String getCardName(String cardId)
     {
-        ConsoleCardView cardView = mCardViews.get(cardId);
-        return cardView != null ? cardView.getName() : null;
+        CardInfo info = mCardInfos.get(cardId);
+        return info != null ? info.aliasInfo().name() : null;
+    }
+
+    /**
+     * Base (active) colour of the card in the console window's palette, or the default palette colour for the card
+     * when the card is not on the console.
+     */
+    int getBaseColor(String cardId)
+    {
+        CardInfo info = mCardInfos.get(cardId);
+        return info != null ? info.baseColor() : ConsoleCardColors.getBaseColor(0, cardId, mPalette);
     }
 
     /**
@@ -1047,8 +1259,15 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
      */
     private boolean isCardAudioMuted(String cardId)
     {
-        ConsoleCardView cardView = mCardViews.get(cardId);
-        return cardView != null && cardView.isAudioMuted();
+        CardInfo info = mCardInfos.get(cardId);
+
+        if(info == null)
+        {
+            return false;
+        }
+
+        ConsoleGroupView groupView = mGroupViews.get(info.groupId());
+        return info.card().isMuted() || (groupView != null && groupView.getGroup().isMuted());
     }
 
     /**
@@ -1073,31 +1292,61 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     private void refreshAliasInfo()
     {
         mAliasesChanged = false;
+        Map<String,Alias> aliases = getAliasIndex();
 
-        for(ConsoleGroup group: mLayout.getGroups())
+        for(Map.Entry<String,CardInfo> entry: mCardInfos.entrySet())
         {
-            for(ConsoleCard card: group.getCards())
-            {
-                ConsoleCardView cardView = mCardViews.get(card.getId());
+            CardInfo info = entry.getValue();
+            entry.setValue(createCardInfo(info.card(), info.groupId(), aliases.get(info.card().getAliasUuid())));
+            ConsoleCardView cardView = mCardViews.get(entry.getKey());
 
-                if(cardView != null)
-                {
-                    cardView.setAliasInfo(getAliasInfo(card));
-                }
+            if(cardView != null)
+            {
+                cardView.setAliasInfo(entry.getValue().aliasInfo());
             }
         }
 
+        refreshGroupSummaries();
         mActivityLogView.refresh();
+    }
+
+    /**
+     * Index of the alias model's aliases by unique identifier (the alias model's lookup is a linear search).
+     */
+    private Map<String,Alias> getAliasIndex()
+    {
+        Map<String,Alias> aliases = new HashMap<>();
+
+        for(Alias alias: new ArrayList<>(mAliasModel.aliasList()))
+        {
+            if(alias != null && alias.getUuid() != null)
+            {
+                aliases.putIfAbsent(alias.getUuid(), alias);
+            }
+        }
+
+        return aliases;
+    }
+
+    /**
+     * Display values for the card.
+     * @param card snapshot
+     * @param groupId of the group that contains the card
+     * @param alias bound to the card, or null when the alias is not found (unlinked card)
+     */
+    private CardInfo createCardInfo(ConsoleCard card, String groupId, Alias alias)
+    {
+        ConsoleCardView.AliasInfo aliasInfo = getAliasInfo(card, alias);
+        return new CardInfo(card, groupId, aliasInfo, ConsoleCardColors.getBaseColor(aliasInfo.color(), card.getId(),
+            mPalette));
     }
 
     /**
      * Alias-derived display values for the card: from the bound alias, or from the card's alias signature when the
      * alias is not found (unlinked card).
      */
-    private ConsoleCardView.AliasInfo getAliasInfo(ConsoleCard card)
+    private static ConsoleCardView.AliasInfo getAliasInfo(ConsoleCard card, Alias alias)
     {
-        Alias alias = mAliasModel.getAliasByUuid(card.getAliasUuid());
-
         if(alias != null)
         {
             return new ConsoleCardView.AliasInfo(true, alias.getName() != null ? alias.getName() : "",
@@ -1117,8 +1366,8 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
      */
     private int getInkColor(String cardId)
     {
-        ConsoleCardView cardView = mCardViews.get(cardId);
-        return cardView != null ? ConsoleCardColors.getInkColor(cardView.getBaseColor(), mPalette) : -1;
+        CardInfo info = mCardInfos.get(cardId);
+        return info != null ? ConsoleCardColors.getInkColor(info.baseColor(), mPalette) : -1;
     }
 
     /**
@@ -1384,5 +1633,16 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
                 Platform.runLater(() -> setPalette(palette));
             }
         }
+    }
+
+    /**
+     * Display values of a card, kept for every card (including the cards of collapsed groups, which have no card view).
+     * @param card snapshot
+     * @param groupId of the group that contains the card
+     * @param aliasInfo alias-derived display values
+     * @param baseColor RGB base (active) colour in the console window's palette
+     */
+    private record CardInfo(ConsoleCard card, String groupId, ConsoleCardView.AliasInfo aliasInfo, int baseColor)
+    {
     }
 }

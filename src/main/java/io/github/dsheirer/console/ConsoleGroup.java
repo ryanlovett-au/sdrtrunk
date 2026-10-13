@@ -28,7 +28,9 @@ import java.util.UUID;
 /**
  * Named group of console cards.  Cards are displayed in list order and groups are displayed in display order.
  *
- * A collapsed group is displayed as its header only (with a summary of the activity on its cards).  A muted group
+ * A collapsed group is displayed as its header and a summary of the activity on its cards.  The column span is the
+ * number of console columns that the group spans (FULL_WIDTH for all columns); the console window clamps it to the
+ * number of columns that fit, without changing the setting.  A muted group
  * silences the audio of all of its cards: a card's effective audio mute is its own mute setting OR its group's mute
  * setting, and the two settings are independent, so unmuting the group restores each card's own setting.
  *
@@ -36,14 +38,24 @@ import java.util.UUID;
  * ConsoleLayoutManager so that constraints are enforced and listeners are notified.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-@JsonPropertyOrder({"id", "name", "displayOrder", "collapsed", "muted", "cards"})
+@JsonPropertyOrder({"id", "name", "displayOrder", "collapsed", "muted", "columnSpan", "cards"})
 public class ConsoleGroup
 {
+    /**
+     * Column span of a group that spans all console columns.
+     */
+    public static final int FULL_WIDTH = 0;
+    /**
+     * Largest column span (other than full width) that can be set.
+     */
+    public static final int MAXIMUM_COLUMN_SPAN = 12;
+
     private String mId;
     private String mName;
     private int mDisplayOrder;
     private boolean mCollapsed;
     private boolean mMuted;
+    private int mColumnSpan = 1;
     private List<ConsoleCard> mCards = new ArrayList<>();
 
     /**
@@ -74,6 +86,7 @@ public class ConsoleGroup
         copy.setDisplayOrder(getDisplayOrder());
         copy.setCollapsed(isCollapsed());
         copy.setMuted(isMuted());
+        copy.setColumnSpan(getColumnSpan());
 
         for(ConsoleCard card: mCards)
         {
@@ -155,6 +168,37 @@ public class ConsoleGroup
     }
 
     /**
+     * Number of console columns that the group spans: 1 (default) or more, or FULL_WIDTH for all columns.  Layout
+     * files saved before column spans were added load with a span of 1.
+     */
+    @JsonProperty("columnSpan")
+    public int getColumnSpan()
+    {
+        return mColumnSpan;
+    }
+
+    /**
+     * Sets the column span, constrained to FULL_WIDTH or 1 - MAXIMUM_COLUMN_SPAN (negative values are treated as 1).
+     */
+    public void setColumnSpan(int columnSpan)
+    {
+        mColumnSpan = normalizeColumnSpan(columnSpan);
+    }
+
+    /**
+     * Constrains a column span to FULL_WIDTH or 1 - MAXIMUM_COLUMN_SPAN (negative values are treated as 1).
+     */
+    public static int normalizeColumnSpan(int columnSpan)
+    {
+        if(columnSpan == FULL_WIDTH)
+        {
+            return FULL_WIDTH;
+        }
+
+        return Math.clamp(columnSpan, 1, MAXIMUM_COLUMN_SPAN);
+    }
+
+    /**
      * Cards in this group, in display order.
      */
     @JsonProperty("cards")
@@ -193,6 +237,6 @@ public class ConsoleGroup
     public String toString()
     {
         return "Console Group [" + getName() + "] id [" + getId() + "] collapsed [" + isCollapsed() + "] muted [" +
-            isMuted() + "] cards [" + mCards.size() + "]";
+            isMuted() + "] span [" + getColumnSpan() + "] cards [" + mCards.size() + "]";
     }
 }

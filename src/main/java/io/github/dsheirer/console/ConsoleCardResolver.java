@@ -41,8 +41,9 @@ import java.util.Set;
  *
  * Audio mute: a card's audio is muted when the card is muted or when the card's group is muted (see isAudioMuted()).
  *
- * Thread safe: lookups use an immutable snapshot that is rebuilt whenever the console layout changes, so lookups from
- * decoder threads never block on the layout manager.
+ * Thread safe: lookups use an immutable snapshot that is rebuilt whenever the console layout changes (a card settings
+ * change, e.g. encryption learning after every call, only replaces that card), so lookups from decoder threads never
+ * block on the layout manager.
  */
 public class ConsoleCardResolver implements Listener<ConsoleLayoutEvent>
 {
@@ -72,15 +73,25 @@ public class ConsoleCardResolver implements Listener<ConsoleLayoutEvent>
     }
 
     @Override
-    public void receive(ConsoleLayoutEvent event)
+    public synchronized void receive(ConsoleLayoutEvent event)
     {
+        //Card setting changes (e.g. encryption learning after every call) replace the card without copying the layout
+        if(event.getType() == ConsoleLayoutEvent.Type.CARD_CHANGED && event.hasCard() &&
+            event.getCard().getAliasUuid() != null)
+        {
+            Map<String,ConsoleCard> cards = new HashMap<>(mCardsByAliasUuid);
+            cards.put(event.getCard().getAliasUuid(), event.getCard());
+            mCardsByAliasUuid = Collections.unmodifiableMap(cards);
+            return;
+        }
+
         refresh();
     }
 
     /**
      * Rebuilds the alias to card lookup snapshot from the current console layout.
      */
-    private void refresh()
+    private synchronized void refresh()
     {
         ConsoleLayout layout = mConsoleLayoutManager.getLayout();
         Map<String,ConsoleCard> cards = new HashMap<>();

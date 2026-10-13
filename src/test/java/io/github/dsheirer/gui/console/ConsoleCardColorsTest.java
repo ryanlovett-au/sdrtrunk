@@ -243,7 +243,7 @@ public class ConsoleCardColorsTest
                 {"-console-group-header-text", "-console-group-header-bg"},
                 {"-console-group-header-text", "-console-group-button-hover"},
                 {"-console-group-active", "-console-group-header-bg"},
-                {"-console-group-summary-idle", "-console-group-header-bg"},
+                {"-console-text", "-console-group-bg"},
                 {"-console-add-card-text", "-console-add-card-bg"},
                 {"-console-add-card-text", "-console-add-card-hover"},
                 {"-console-log-title-text", "-console-log-title-bg"},
@@ -300,7 +300,8 @@ public class ConsoleCardColorsTest
                     {"-console-add-card-border", "-console-group-bg"},
                     {"-console-group-muted-card-accent", "-console-group-muted-card-bg"},
                     {"-console-mute-on-icon", "-console-mute-on-bg"},
-                    {"-console-log-mode-border", "-console-log-title-bg"}};
+                    {"-console-log-mode-border", "-console-log-title-bg"},
+                    {"-console-resize-handle", "-console-group-bg"}};
 
                 for(String[] pair: nonTextPairs)
                 {
@@ -410,6 +411,147 @@ public class ConsoleCardColorsTest
         assertEquals(VisualState.HANG, VisualState.of(CardActivityState.HANG, true, true));
         assertEquals(VisualState.IDLE, VisualState.of(CardActivityState.IDLE, true, true));
         assertEquals(VisualState.UNLINKED, VisualState.of(CardActivityState.ACTIVE, false, false));
+    }
+
+    @Test
+    void visualStateFollowsTheHangingCall()
+    {
+        assertEquals(VisualState.HANG, VisualState.of(CardActivityState.HANG, CardActivityState.ACTIVE, false, false,
+            true));
+        assertEquals(VisualState.HANG, VisualState.of(CardActivityState.HANG, null, false, true, true));
+        assertEquals(VisualState.HANG_ENCRYPTED, VisualState.of(CardActivityState.HANG, CardActivityState.ENCRYPTED,
+            false, false, true));
+        assertEquals(VisualState.HANG_CLEAR, VisualState.of(CardActivityState.HANG, CardActivityState.ACTIVE, true,
+            false, true));
+        assertEquals(VisualState.HANG_CLEAR, VisualState.of(CardActivityState.HANG, CardActivityState.ENCRYPTED, true,
+            false, true), "Expected the clear alert colour before the encrypted colour");
+        assertEquals(VisualState.ACTIVE, VisualState.of(CardActivityState.ACTIVE, null, true, false, true),
+            "Expected the alias colour (with the red alert border) while clear audio is received");
+        assertEquals(VisualState.UNLINKED, VisualState.of(CardActivityState.HANG, CardActivityState.ENCRYPTED, false,
+            false, false));
+
+        for(VisualState state: List.of(VisualState.HANG, VisualState.HANG_ENCRYPTED, VisualState.HANG_CLEAR))
+        {
+            assertTrue(state.isLive() && state.isHang(), "Live hang state " + state);
+            assertEquals("HANG", state.getLabel(), "Label");
+            assertEquals("state-hang", state.getStyleClass(), "Style class");
+        }
+    }
+
+    @Test
+    void hangColourIsATintOfTheCallColour()
+    {
+        //The user's RadioReference imported aliases: mustard alias colour on encrypted talkgroups
+        int base = ConsoleCardColors.getBaseColor(0xFFC8A02C, "card");
+
+        for(Palette palette: Palette.values())
+        {
+            ConsoleCardColors.CardPaint encrypted = ConsoleCardColors.getPaint(base, VisualState.ENCRYPTED, palette);
+            ConsoleCardColors.CardPaint hangEncrypted = ConsoleCardColors.getPaint(base, VisualState.HANG_ENCRYPTED,
+                palette);
+            ConsoleCardColors.CardPaint hang = ConsoleCardColors.getPaint(base, VisualState.HANG, palette);
+            ConsoleCardColors.CardPaint hangClear = ConsoleCardColors.getPaint(base, VisualState.HANG_CLEAR, palette);
+
+            assertEquals(encrypted.border(), hangEncrypted.border(), palette + ": purple border after encrypted call");
+            assertEquals(ConsoleCardColors.CLEAR_ALERT, hangClear.border(), palette + ": red border after clear alert");
+            assertNotEquals(hang.fill(), hangEncrypted.fill(), palette + ": encrypted hang is not the alias tint");
+            int idle = palette.getIdleFill();
+            assertTrue(isPurpleTint(hangEncrypted.fill(), idle), palette + ": purple tint " +
+                ConsoleCardColors.toHex(hangEncrypted.fill()));
+            assertTrue(isRedTint(hangClear.fill(), idle), palette + ": red tint " +
+                ConsoleCardColors.toHex(hangClear.fill()));
+
+            //A tint: lighter than the call fill in the light palette, darker in the dark palette
+            double callLuminance = ConsoleCardColors.contrastRatio(encrypted.fill(), 0x000000);
+            double hangLuminance = ConsoleCardColors.contrastRatio(hangEncrypted.fill(), 0x000000);
+            assertTrue(palette.isDark() ? hangLuminance < callLuminance : hangLuminance > callLuminance,
+                palette + ": encrypted hang tint " + ConsoleCardColors.toHex(hangEncrypted.fill()));
+        }
+
+        assertEquals(ConsoleCardColors.mix(ConsoleCardColors.ENCRYPTED_BORDER, ConsoleCardColors.IDLE_FILL,
+            1.0 - ConsoleCardColors.HANG_TINT), ConsoleCardColors.getPaint(base, VisualState.HANG_ENCRYPTED).fill(),
+            "Light palette encrypted hang: 16% of the encrypted purple");
+    }
+
+    /**
+     * Change of each RGB channel from the idle card fill to the colour.
+     */
+    private static int[] shift(int rgb, int idle)
+    {
+        return new int[]{((rgb >> 16) & 0xFF) - ((idle >> 16) & 0xFF), ((rgb >> 8) & 0xFF) - ((idle >> 8) & 0xFF),
+            (rgb & 0xFF) - (idle & 0xFF)};
+    }
+
+    /**
+     * Indicates if the colour is the idle card fill shifted towards purple (red and blue more than green).
+     */
+    private static boolean isPurpleTint(int rgb, int idle)
+    {
+        int[] shift = shift(rgb, idle);
+        return shift[0] > shift[1] && shift[2] > shift[1];
+    }
+
+    /**
+     * Indicates if the colour is the idle card fill shifted towards red (red more than green and blue).
+     */
+    private static boolean isRedTint(int rgb, int idle)
+    {
+        int[] shift = shift(rgb, idle);
+        return shift[0] > shift[1] && shift[0] > shift[2];
+    }
+
+    @Test
+    void collapsedGroupSummaryKeepsContrast() throws IOException
+    {
+        String css = readStylesheet();
+
+        for(Palette palette: Palette.values())
+        {
+            int groupBackground = color(tokens(css, palette, Set.of()), "-console-group-bg");
+
+            for(int aliasColor: allAliasColors())
+            {
+                int base = ConsoleCardColors.getBaseColor(aliasColor, "card", palette);
+
+                for(VisualState state: VisualState.values())
+                {
+                    if(!state.isLive())
+                    {
+                        continue;
+                    }
+
+                    for(boolean clearAlert: List.of(false, true))
+                    {
+                        ConsoleCardColors.SummaryPaint paint = ConsoleCardColors.getSummaryPaint(base, state,
+                            clearAlert, palette);
+                        String context = palette + " " + state + (clearAlert ? " clear alert" : "") + " alias " +
+                            ConsoleCardColors.toHex(aliasColor) + ": ";
+                        assertContrast(paint.statusText(), paint.statusFill(), TEXT_CONTRAST, context + "status");
+                        assertContrast(paint.dotOutline(), groupBackground, NON_TEXT_CONTRAST, context + "dot");
+                    }
+                }
+            }
+
+            //Dot colours follow the call: alias colour, encrypted purple, alert red
+            int base = ConsoleCardColors.getBaseColor(0xFF9447, "card", palette);
+            assertEquals(base, ConsoleCardColors.getSummaryPaint(base, VisualState.ACTIVE, false, palette).dot());
+            assertEquals(base, ConsoleCardColors.getSummaryPaint(base, VisualState.HANG, false, palette).dot());
+            int encrypted = ConsoleCardColors.getPaint(base, VisualState.ENCRYPTED, palette).fill();
+            assertEquals(encrypted, ConsoleCardColors.getSummaryPaint(base, VisualState.ENCRYPTED, false, palette)
+                .dot());
+            assertEquals(encrypted, ConsoleCardColors.getSummaryPaint(base, VisualState.HANG_ENCRYPTED, false,
+                palette).dot(), "Expected the encrypted colour while hanging after an encrypted call");
+            assertEquals(ConsoleCardColors.CLEAR_ALERT, ConsoleCardColors.getSummaryPaint(base, VisualState.HANG_CLEAR,
+                true, palette).dot());
+            assertEquals(ConsoleCardColors.CLEAR_ALERT_FILL, ConsoleCardColors.getSummaryPaint(base,
+                VisualState.ACTIVE, true, palette).statusFill());
+
+            //Summary text on the group panel (the same body as the empty group text)
+            Map<String,String> root = tokens(css, palette, Set.of());
+            assertContrast(color(root, "-console-text"), groupBackground, TEXT_CONTRAST, palette + " row name");
+            assertContrast(color(root, "-console-text-secondary"), groupBackground, TEXT_CONTRAST,
+                palette + " row talker, more and idle text");
+        }
     }
 
     @Test

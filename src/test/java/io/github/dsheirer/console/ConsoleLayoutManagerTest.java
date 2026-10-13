@@ -424,7 +424,49 @@ public class ConsoleLayoutManagerTest
         assertNotNull(group, "Group");
         assertFalse(group.isCollapsed(), "Expected expanded by default");
         assertFalse(group.isMuted(), "Expected not muted by default");
+        assertEquals(1, group.getColumnSpan(), "Expected one column by default");
         manager.shutdown();
+    }
+
+    @Test
+    void groupColumnSpanPersistsAndBroadcastsEvents() throws Exception
+    {
+        ConsoleLayoutManager manager = new ConsoleLayoutManager(getLayoutPath());
+        List<ConsoleLayoutEvent> events = new ArrayList<>();
+        manager.load();
+        ConsoleGroup fire = manager.addGroup("Fire");
+        ConsoleGroup police = manager.addGroup("Police");
+        assertEquals(1, fire.getColumnSpan(), "Default span");
+        manager.addListener(events::add);
+
+        assertTrue(manager.setGroupColumnSpan(fire.getId(), 2), "Group found");
+        assertTrue(manager.setGroupColumnSpan(fire.getId(), 2), "Group found"); //No change - no event
+        assertTrue(manager.setGroupColumnSpan(police.getId(), ConsoleGroup.FULL_WIDTH), "Group found");
+        assertFalse(manager.setGroupColumnSpan("missing", 2), "Expected unknown group");
+        assertEquals(List.of(ConsoleLayoutEvent.Type.GROUP_STATE_CHANGED, ConsoleLayoutEvent.Type.GROUP_STATE_CHANGED),
+            events.stream().map(ConsoleLayoutEvent::getType).toList(), "Event sequence");
+        assertEquals(2, manager.getGroup(fire.getId()).getColumnSpan(), "Span");
+        assertEquals(ConsoleGroup.FULL_WIDTH, manager.getGroup(police.getId()).getColumnSpan(), "Full width");
+        assertEquals(2, manager.getLayout().getGroup(fire.getId()).getColumnSpan(), "Span in a layout snapshot");
+
+        //Out of range spans are constrained
+        manager.setGroupColumnSpan(fire.getId(), -3);
+        assertEquals(1, manager.getGroup(fire.getId()).getColumnSpan(), "Negative span");
+        manager.setGroupColumnSpan(fire.getId(), 99);
+        assertEquals(ConsoleGroup.MAXIMUM_COLUMN_SPAN, manager.getGroup(fire.getId()).getColumnSpan(), "Large span");
+        manager.setGroupColumnSpan(fire.getId(), 3);
+
+        assertTrue(manager.isSavePending(), "Expected a span change to schedule a save");
+        manager.saveNow();
+        String json = Files.readString(getLayoutPath());
+        assertTrue(json.contains("\"columnSpan\" : 3"), "Expected the span in JSON: " + json);
+
+        ConsoleLayoutManager reloaded = new ConsoleLayoutManager(getLayoutPath());
+        reloaded.load();
+        assertEquals(3, reloaded.getGroup(fire.getId()).getColumnSpan(), "Span after reload");
+        assertEquals(ConsoleGroup.FULL_WIDTH, reloaded.getGroup(police.getId()).getColumnSpan(),
+            "Full width after reload");
+        reloaded.shutdown();
     }
 
     @Test

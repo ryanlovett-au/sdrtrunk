@@ -88,6 +88,11 @@ public class ConsoleLayoutManager
     private static final String TEMPORARY_FILE_SUFFIX = ".tmp";
     private static final String CORRUPT_FILE_SUFFIX = ".corrupt.";
     private static final long SAVE_DELAY_MS = 2000;
+    /**
+     * Save delay for encryption learning changes, which are recorded after every call on the console: the learning
+     * state is saved with the next layout change, or within this delay (and on shutdown).
+     */
+    private static final long LEARNING_SAVE_DELAY_MS = 60000;
     private static final DateTimeFormatter CORRUPT_FILE_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
 
     private final ObjectMapper mObjectMapper;
@@ -696,12 +701,31 @@ public class ConsoleLayoutManager
      */
     private void scheduleSave()
     {
-        if(mSavePending.compareAndSet(false, true))
+        scheduleSave(SAVE_DELAY_MS);
+    }
+
+    /**
+     * Schedules a debounced save of the layout file within the delay: a save that is already scheduled to run within
+     * the delay is kept, and a save that is scheduled later is rescheduled.
+     * @param delayMs maximum delay before the save
+     */
+    private void scheduleSave(long delayMs)
+    {
+        synchronized(mSaveFutureLock)
         {
-            synchronized(mSaveFutureLock)
+            mSavePending.set(true);
+
+            if(mSaveFuture != null)
             {
-                mSaveFuture = ThreadPool.SCHEDULED.schedule(new SaveTask(), SAVE_DELAY_MS, TimeUnit.MILLISECONDS);
+                if(mSaveFuture.getDelay(TimeUnit.MILLISECONDS) <= delayMs)
+                {
+                    return;
+                }
+
+                mSaveFuture.cancel(false);
             }
+
+            mSaveFuture = ThreadPool.SCHEDULED.schedule(new SaveTask(), delayMs, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -1127,6 +1151,20 @@ public class ConsoleLayoutManager
     }
 
     /**
+     * Sets the number of console columns that the group spans: 1 or more, or ConsoleGroup.FULL_WIDTH for all columns
+     * (constrained, see ConsoleGroup.setColumnSpan()).  The console window clamps the span to the columns that fit.
+     * Broadcasts a GROUP_STATE_CHANGED event when the span changes.
+     * @param groupId to update
+     * @param columnSpan number of columns, or ConsoleGroup.FULL_WIDTH
+     * @return true if the group was found.
+     */
+    public boolean setGroupColumnSpan(String groupId, int columnSpan)
+    {
+        int span = ConsoleGroup.normalizeColumnSpan(columnSpan);
+        return updateGroup(groupId, group -> group.getColumnSpan() != span, group -> group.setColumnSpan(span));
+    }
+
+    /**
      * Applies the update to the group when the group is found and the update applies, and broadcasts a
      * GROUP_STATE_CHANGED event when the group was updated.
      * @param groupId to update
@@ -1399,7 +1437,7 @@ public class ConsoleLayoutManager
      */
     public boolean recordCardCall(String cardId, boolean encrypted)
     {
-        return updateCard(cardId, card -> card.recordCall(encrypted));
+        return updateCard(cardId, card -> card.recordCall(encrypted), LEARNING_SAVE_DELAY_MS);
     }
 
     /**
@@ -1409,6 +1447,18 @@ public class ConsoleLayoutManager
      * @return true if the card was found.
      */
     private boolean updateCard(String cardId, Consumer<ConsoleCard> update)
+    {
+        return updateCard(cardId, update, SAVE_DELAY_MS);
+    }
+
+    /**
+     * Applies the update to the card and broadcasts a CARD_CHANGED event when the card settings change.
+     * @param cardId to update
+     * @param update to apply
+     * @param saveDelayMs maximum delay before the change is saved
+     * @return true if the card was found.
+     */
+    private boolean updateCard(String cardId, Consumer<ConsoleCard> update, long saveDelayMs)
     {
         ConsoleLayoutEvent event;
 
@@ -1434,7 +1484,8 @@ public class ConsoleLayoutManager
             event = new ConsoleLayoutEvent(ConsoleLayoutEvent.Type.CARD_CHANGED, group.getId(), card.copyOf());
         }
 
-        changed(event);
+        scheduleSave(saveDelayMs);
+        broadcast(event);
         return true;
     }
 
@@ -1472,9 +1523,9 @@ public class ConsoleLayoutManager
             synchronized(mSaveFutureLock)
             {
                 mSaveFuture = null;
+                mSavePending.set(false);
             }
 
-            mSavePending.set(false);
             save();
         }
     }

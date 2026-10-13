@@ -49,7 +49,8 @@ public class ConsoleLayoutEvent
          */
         GROUP_CHANGED,
         /**
-         * Group collapsed or muted state changed.  Listeners can update the group in place (no rebuild is needed).
+         * Group collapsed state, muted state or column span changed.  Listeners can update the group in place (no
+         * rebuild is needed).
          */
         GROUP_STATE_CHANGED,
         /**

@@ -92,7 +92,9 @@ import org.slf4j.LoggerFactory;
  *
  * Thread safety: events and mixer levels are received on decoder and mixer threads and state is guarded by this
  * instance's lock.  The console window polls getSnapshot() (e.g. at 10 Hz) to obtain an immutable snapshot, so no
- * per-event UI work is scheduled.
+ * per-event UI work is scheduled.  Snapshots reuse the previous activity instance of each card that has not changed
+ * (and the previous card map when no card changed), so the cost of a snapshot does not grow with the number of idle
+ * cards, and the console window can skip unchanged cards by reference.
  */
 public class ConsoleActivityRouter implements Listener<IDecodeEvent>
 {
@@ -151,6 +153,7 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     private final Listener<String> mClearAudioAlertListener = this::receiveClearAudioAlert;
     private final Map<IDecodeEvent,CallTrack> mCalls = new IdentityHashMap<>();
     private final Map<String,CardTrack> mCards = new HashMap<>();
+    private Map<String,ConsoleCardActivity> mCardActivities = Map.of();
     private final List<ConsoleActivityLogEntry> mActivityLog = new ArrayList<>();
     private final List<ConsoleActivityLogEntry> mAllTrafficLog = new ArrayList<>();
     private List<ConsoleActivityLogEntry> mActivityLogCopy = List.of();
@@ -538,9 +541,11 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
                             List<CompletedCall> completed)
     {
         CardTrack cardTrack = mCards.computeIfAbsent(card.getId(), id -> new CardTrack());
+        cardTrack.mChanged = true;
 
         if(progress)
         {
+            cardTrack.markLive(now, mHangTimeMs, mCallUpdateTimeoutMs);
             cardTrack.mLastCallProgress = now;
 
             //A new call on the card completes the card's previous call
@@ -760,6 +765,7 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
         synchronized(this)
         {
             CardTrack cardTrack = mCards.computeIfAbsent(cardId, id -> new CardTrack());
+            cardTrack.mChanged = true;
             CallTrack call = cardTrack.mCurrentCall;
             cardTrack.mClearAlert = true;
             cardTrack.mClearAlertCall = call;
@@ -798,7 +804,10 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
             {
                 if(cardLevel.voiceCount() > 0 && cardLevel.cardId() != null)
                 {
-                    mCards.computeIfAbsent(cardLevel.cardId(), id -> new CardTrack()).mLastAudio = now;
+                    CardTrack cardTrack = mCards.computeIfAbsent(cardLevel.cardId(), id -> new CardTrack());
+                    cardTrack.markLive(now, mHangTimeMs, mCallUpdateTimeoutMs);
+                    cardTrack.mLastAudio = now;
+                    cardTrack.mChanged = true;
                 }
             }
         }
@@ -806,7 +815,8 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
 
     /**
      * Creates an immutable snapshot of the current console activity.  Calls that completed since the last update are
-     * recorded for encryption learning (outside of this router's lock).
+     * recorded for encryption learning (outside of this router's lock).  The activity instance of each card whose
+     * activity has not changed since the previous snapshot is reused, as is the card map when no card changed.
      */
     public ConsoleActivitySnapshot getSnapshot()
     {
@@ -818,17 +828,23 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
             long now = mClock.getAsLong();
             purgeCalls(now, completed);
             long hangTimeMs = mHangTimeMs;
-            Map<String,ConsoleCardActivity> cards = new HashMap<>();
+            boolean changed = mCardActivities.size() != mCards.size();
 
             for(Map.Entry<String,CardTrack> entry: mCards.entrySet())
             {
-                CardTrack track = entry.getValue();
-                CardActivityState state = track.getState(now, hangTimeMs, mCallUpdateTimeoutMs);
-                boolean clearAlert = track.mClearAlert && track.mClearAlertCall == track.mCurrentCall &&
-                    (state == CardActivityState.ACTIVE || state == CardActivityState.HANG);
-                cards.put(entry.getKey(), new ConsoleCardActivity(entry.getKey(), state, track.mTalkerId,
-                    track.mTalkerName, track.mSite, track.mTalkgroup, track.mRecentTalkers, track.getLastActivity(),
-                    clearAlert));
+                changed |= entry.getValue().updateActivity(entry.getKey(), now, hangTimeMs, mCallUpdateTimeoutMs);
+            }
+
+            if(changed)
+            {
+                Map<String,ConsoleCardActivity> cards = new HashMap<>();
+
+                for(Map.Entry<String,CardTrack> entry: mCards.entrySet())
+                {
+                    cards.put(entry.getKey(), entry.getValue().mActivity);
+                }
+
+                mCardActivities = Map.copyOf(cards);
             }
 
             //Immutable copies of the logs are only created when the logs change
@@ -839,7 +855,8 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
                 mLogCopyVersion = mLogVersion;
             }
 
-            snapshot = new ConsoleActivitySnapshot(now, cards, mActivityLogCopy, mAllTrafficLogCopy, mLogVersion);
+            snapshot = new ConsoleActivitySnapshot(now, mCardActivities, mActivityLogCopy, mAllTrafficLogCopy,
+                mLogVersion);
         }
 
         recordCompletedCalls(completed);
@@ -892,6 +909,7 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     {
         mCalls.clear();
         mCards.clear();
+        mCardActivities = Map.of();
         mActivityLog.clear();
         mAllTrafficLog.clear();
         mLogVersion++;
@@ -951,6 +969,7 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     {
         private long mLastCallProgress = -1;
         private long mLastAudio = -1;
+        private long mLiveSince;
         private CallTrack mCurrentCall;
         private CallTrack mClearAlertCall;
         private boolean mClearAlert;
@@ -960,6 +979,8 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
         private String mSite;
         private String mTalkgroup;
         private final LinkedList<RecentTalker> mRecentTalkers = new LinkedList<>();
+        private boolean mChanged = true;
+        private ConsoleCardActivity mActivity;
 
         /**
          * Adds the talker as the most recent talker, removing any previous entry for the same radio.
@@ -985,11 +1006,82 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
         }
 
         /**
+         * Starts a new live period at the specified time when the card is idle (not in a call and not hanging).
+         * Invoke before applying a call progress or audio update.
+         */
+        private void markLive(long now, long hangTimeMs, long callUpdateTimeoutMs)
+        {
+            if(getState(now, hangTimeMs, callUpdateTimeoutMs) == CardActivityState.IDLE)
+            {
+                mLiveSince = now;
+            }
+        }
+
+        /**
+         * Updates the card's activity snapshot (mActivity) when the card's details changed or its state changed.
+         * @return true if the activity snapshot was replaced.
+         */
+        private boolean updateActivity(String cardId, long now, long hangTimeMs, long callUpdateTimeoutMs)
+        {
+            CardActivityState state = getState(now, hangTimeMs, callUpdateTimeoutMs);
+            boolean clearAlert = mClearAlert && mClearAlertCall == mCurrentCall &&
+                (state == CardActivityState.ACTIVE || state == CardActivityState.HANG);
+            CardActivityState hangFrom = state == CardActivityState.HANG ? getHangFrom(callUpdateTimeoutMs) : null;
+            ConsoleCardActivity previous = mActivity;
+
+            if(!mChanged && previous != null && previous.state() == state && previous.clearAlert() == clearAlert &&
+                previous.hangFrom() == hangFrom)
+            {
+                return false;
+            }
+
+            mChanged = false;
+            mActivity = new ConsoleCardActivity(cardId, state, mTalkerId, mTalkerName, mSite, mTalkgroup,
+                mRecentTalkers, getLastActivity(), clearAlert, state != CardActivityState.IDLE ? mLiveSince : 0,
+                hangFrom);
+            return true;
+        }
+
+        /**
          * Timestamp of the most recent call or audio activity, or 0.
          */
         private long getLastActivity()
         {
             return Math.max(0, Math.max(mLastCallProgress, mLastAudio));
+        }
+
+        /**
+         * Time until which the card is active (call progress or audio), or -1 when the card has had no activity.
+         */
+        private long getActiveUntil(long callUpdateTimeoutMs)
+        {
+            long callActiveUntil = mLastCallProgress >= 0 ? mLastCallProgress + callUpdateTimeoutMs : -1;
+            return Math.max(callActiveUntil, getAudioActiveUntil());
+        }
+
+        /**
+         * Time until which the card's audio is present, or -1.
+         */
+        private long getAudioActiveUntil()
+        {
+            return mLastAudio >= 0 ? mLastAudio + AUDIO_PRESENCE_TIMEOUT_MS : -1;
+        }
+
+        /**
+         * State of the call in progress at the specified time (ENCRYPTED, or ACTIVE): encrypted when the call is
+         * flagged as encrypted and the console mixer is not playing audio for the card.
+         */
+        private CardActivityState getInProgressState(long now)
+        {
+            return mEncrypted && now >= getAudioActiveUntil() ? CardActivityState.ENCRYPTED : CardActivityState.ACTIVE;
+        }
+
+        /**
+         * State of the card's call just before it ended (for a hanging card): ENCRYPTED or ACTIVE.
+         */
+        private CardActivityState getHangFrom(long callUpdateTimeoutMs)
+        {
+            return getInProgressState(getActiveUntil(callUpdateTimeoutMs) - 1);
         }
 
         /**
@@ -1001,9 +1093,7 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
          */
         private CardActivityState getState(long now, long hangTimeMs, long callUpdateTimeoutMs)
         {
-            long callActiveUntil = mLastCallProgress >= 0 ? mLastCallProgress + callUpdateTimeoutMs : -1;
-            long audioActiveUntil = mLastAudio >= 0 ? mLastAudio + AUDIO_PRESENCE_TIMEOUT_MS : -1;
-            long activeUntil = Math.max(callActiveUntil, audioActiveUntil);
+            long activeUntil = getActiveUntil(callUpdateTimeoutMs);
 
             if(activeUntil < 0)
             {
@@ -1012,7 +1102,7 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
 
             if(now < activeUntil)
             {
-                return mEncrypted && now >= audioActiveUntil ? CardActivityState.ENCRYPTED : CardActivityState.ACTIVE;
+                return getInProgressState(now);
             }
 
             if(now < activeUntil + hangTimeMs)

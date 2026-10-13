@@ -51,7 +51,7 @@ activity and plays audio according to per-card settings.
 | Active (receiving) | Card filled with its active colour (alias colour or a default) |
 | Active + muted | Muted variant of the active fill plus a mute indicator |
 | Encrypted | Distinct fill, no audio |
-| Hang | Active colour held for a configurable hang time (default 2 s) after the call ends |
+| Hang | A tint of the colour the card showed during the call, held for a configurable hang time (default 2 s) after the call ends: alias colour tint (active or muted call), encrypted purple tint with a purple border (encrypted call), alert red tint with a red border (clear audio alert) |
 
 ## Architecture
 
@@ -148,13 +148,14 @@ picker, confirmations, errors) are standard JavaFX windows that follow the appli
   `.console-root` / `.console-root.dark` (window, header, switch, control strip, hint banner, groups, drop highlight,
   activity log) and `-card-*` per card state (status pills, mute/pan/volume controls, edit controls).
 - **Alias colour dependent colours** (`ConsoleCardColors.Palette`): card fill, border and text (set inline, including the
-  `-card-text`/`-card-sub` tokens), collapsed group badges and the activity log talkgroup ink. Dark: idle `#161C24` /
+  `-card-text`/`-card-sub` tokens), collapsed group summary dots and status pills and the activity log talkgroup ink. Dark: idle `#161C24` /
   `#283140` with `#E6EDF3` text; active cards keep the alias colour (lightened when needed) with near-black text; muted
   = 30% alias colour mixed into the idle surface with a dashed alias-colour border; hang = 13% tint with an alias-colour
   border (tints reduced when needed for the light text); encrypted `#B794F6`; selected pan segment inverted.
 - **Contrast:** `ConsoleCardColorsTest` checks every text/background pair at 4.5:1 (3:1 for borders, dots and icons in
   the dark palette) for the 12 test alias colours plus very dark and very light colours, reading the token values from
-  `console.css`. The light palette is unchanged except the unlinked status pill (`#5F6B78`, was 4.4:1), the drag handle
+  `console.css`, including the hang states (alias, encrypted and clear alert tints) and the collapsed group summary
+  (status pill text, 3:1 dot outline and row text on the group panel). The light palette is unchanged except the unlinked status pill (`#5F6B78`, was 4.4:1), the drag handle
   on live cards (`#1F2E3F`) and the alias picker's assigned rows (a text colour instead of 50% opacity).
 
 ## Collapsible and muted groups
@@ -164,16 +165,72 @@ target) next to the active count, in normal and edit mode. Both states are persi
 the layout JSON, default false) via `ConsoleLayoutManager.setGroupCollapsed/setGroupMuted/setAllGroupsCollapsed`, which
 broadcast `GROUP_STATE_CHANGED` (the console window updates the group in place, without a rebuild).
 
-- **Collapsed:** only the header is shown. A second header row summarises the cards' activity
-  (`console.activity.ConsoleGroupActivity`): a badge in the featured card's fill colour (red for a clear audio alert)
-  with the card name and talker, e.g. "● 23 NR Emergency · 5710363", plus "+N more" for other live cards (RX, RX
-  MUTED, ENCRYPTED, CLEAR or HANG), and the existing "N ACTIVE" count. The featured card is a clear audio alert first,
-  then a call in progress, then a hanging call, then the most recent activity. Idle collapsed groups show
-  "N talkgroups · no activity". Cards dragged in edit mode can be dropped on a collapsed group.
+- **Collapsed:** the header (chevron, name, "N ACTIVE", group mute) and, instead of the cards, a summary body styled
+  like the empty group body (`console.activity.ConsoleGroupActivity`): up to 4 rows for the live cards (calls in
+  progress or hanging), each with a colour dot (the colour of the call: alias colour, encrypted purple, alert red), the
+  talkgroup name (ellipsis), the current talker (alias name or radio ID) and a status pill drawn like the card's status
+  (RX, RX MUTED, ENCRYPTED, CLEAR or HANG; `ConsoleCardColors.getSummaryPaint()`), then "+N more active". Rows are
+  ordered by the start of each card's live period (oldest first, ties in card order; `ConsoleCardActivity.callStart`)
+  so rows do not jump and new calls append; a card with a clear audio alert is always shown (replacing the newest
+  row). Idle collapsed groups show "202 talkgroups · no activity". The card views of a collapsed group are not created
+  (they are created when the group is expanded). Cards dragged in edit mode can be dropped on a collapsed group.
 - **Muted:** a card's effective audio mute is its own mute OR its group's mute (`ConsoleCardResolver.isAudioMuted()`);
   the flags are independent, so unmuting the group restores each card's own setting. The mixer ramps voices of cards in
   a muted group to silence like a card mute; clear audio alert beeps still play. Cards in a muted group show RX MUTED
   and a dashed red "Muted by group" mute button (the card's own setting is unchanged), and the activity log shows MUTED.
+
+## Group layout and widths
+
+The groups are laid out in masonry columns (`gui.console.ConsoleColumnPane`, placement in the toolkit independent
+`ConsoleMasonry`): as many columns as fit with at least 300 px, and each group, in display order (move left/right), is
+placed in the currently shortest column (ties to the leftmost), so the columns pack vertically without the gaps that a
+row based layout leaves under short groups. The layout is recalculated when the window is resized and when groups or
+cards are added, removed, reordered, collapsed or expanded.
+
+A group can span several columns (`columnSpan` in the layout JSON, default 1, 0 = full width; layouts saved before
+spans load with 1; `ConsoleLayoutManager.setGroupColumnSpan`, broadcast as `GROUP_STATE_CHANGED`). A group spanning S
+columns is placed at the leftmost position whose S adjacent columns have the lowest maximum height. Spans are clamped
+to the columns that fit (full width = all columns) without changing the saved span, so a group expands again when the
+window widens. The cards of a wide group are laid out in a grid with S card columns (`ConsoleCardGrid`), in card order,
+with the same card width as (and aligned with) single column groups; a collapsed wide group shows its summary across
+the span. The width is set from the group header's context menu (right-click, or the keyboard context menu key on the
+focused chevron or mute button; also outside edit mode): Width ▸ 1 column … N columns (only spans that fit, plus the
+saved span when it is clamped, e.g. "3 columns (2 fit)") / Full width; the menu also has collapse/expand and mute/unmute.
+In edit mode each group has a resize handle on its right edge: dragging snaps to whole columns with a dashed snap
+preview, and the span is saved when released.
+
+## Performance
+
+Measured with a temporary harness (300 cards in 6 groups of 202/66/10/8/8/6, about 10 simultaneous calls with talker
+updates and mixer levels, the window at 1440×900) before and after the changes below. Steady-state per-tick work was
+already small (about 0.3 ms per 10 Hz refresh); the cost was in rebuilding: every structural layout event (card move,
+add or remove, edit mode, group add/rename/reorder, re-link) rebuilt all card views (about 43 nodes and 7 tooltips,
+each with its own popup scene, per card), 0.3–2.4 s of JavaFX thread time and about 110 MB of garbage each time for
+300 cards, and collapsed groups kept all their (hidden) card nodes.
+
+- Layout changes synchronise the existing group and card views with the layout instead of recreating them; only
+  palette changes recreate the views. Card setting changes (including encryption learning after every call) and card
+  re-binding update the one card in place, and only the properties that changed.
+- Card views exist only for expanded groups. Per-card display values that the summaries and the activity log need
+  (alias name, colour) are kept for every card. Alias lookups use a UUID index instead of a linear search per card.
+- Tooltips are shared per text; edit mode controls, the encrypted indicator and the unlinked card actions are created
+  when first needed. Card paints and inline card styles are cached per alias colour, state and palette; a card's style
+  and style classes (which make CSS reapply to the card) are only changed when its appearance changes.
+- `ConsoleActivityRouter` snapshots reuse the activity instance of each unchanged card (and the card map when nothing
+  changed), so the window skips unchanged cards by reference and skips the per-card loop when no card changed.
+- `ConsoleCardResolver` replaces only the changed card on `CARD_CHANGED` instead of copying the whole layout, and
+  encryption learning changes are saved within 60 s (or with the next layout change, or on shutdown) instead of 2 s.
+
+| 300 cards | Before | After |
+|---|---|---|
+| Rebuild on a layout event (card move, edit mode, …) | 280 ms – 2.4 s, ~110 MB garbage | 14 ms (7 ms with the 202 group collapsed) |
+| Card move, FX CPU incl. CSS/layout | 259 ms | 47 ms |
+| Edit mode toggle | 270 ms | 23 ms |
+| Card setting change (CARD_CHANGED), above a ~11 ms measurement baseline | ~9 ms | < 1 ms |
+| Window build (show) | 1.1 s | 0.72 s (0.52 s with the 202 group collapsed) |
+| Scene nodes (all expanded / 202 group collapsed) | 12,969 / 12,969 | 9,865 / 3,595 |
+| Live heap after show (all expanded / 202 collapsed) | 172 MB / 194 MB | 113 MB / 94 MB |
+| Collapse / expand the 202 card group | 85 / 62 ms | 32 / 96 ms (cards created on expand) |
 
 ## Activity log: console only / all traffic
 

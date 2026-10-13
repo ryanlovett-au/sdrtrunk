@@ -25,7 +25,9 @@ import io.github.dsheirer.console.ConsoleGroup;
 import io.github.dsheirer.console.activity.ConsoleCardActivity;
 import io.github.dsheirer.console.activity.RecentTalker;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.ContextMenu;
@@ -37,7 +39,6 @@ import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.Slider;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
-import javafx.scene.control.Tooltip;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.TransferMode;
@@ -58,8 +59,14 @@ import javafx.scene.shape.SVGPath;
  * Cards in a muted group are shown as muted (RX MUTED, muted fill) while the card's own mute setting is unchanged: the
  * mute button shows a "muted by group" state (muted icon with a dashed red outline) unless the card is also muted.
  *
+ * Hanging cards keep the colour of the call before it ended: a tint of the alias colour, of the encrypted colour after
+ * an encrypted call, or of the alert red after a clear audio alert (see ConsoleCardColors.VisualState).
+ *
  * Audio settings changes are applied via the console layout manager; the view is updated from layout manager events
- * (setCard()) and from console activity snapshots (setActivity()).  Invoke all methods on the JavaFX thread.
+ * (setCard()) and from console activity snapshots (setActivity()).  Updates only touch the nodes whose values changed:
+ * the card style (inline colours and state style classes, which cause CSS to be reapplied to the card) is only changed
+ * when the card's visual state changes, and tooltips are shared (see ConsoleWindow.getTooltip()).  Invoke all methods
+ * on the JavaFX thread.
  */
 public class ConsoleCardView extends VBox
 {
@@ -73,8 +80,9 @@ public class ConsoleCardView extends VBox
         "M18.5 5.5 A9 9 0 0 1 18.5 18.5";
     private static final String LOCK_ICON = "M7 11 V8 A5 5 0 0 1 17 8 V11 M5 11 H19 V21 H5 Z";
     private static final String CLEAR_ALERT_STYLE_CLASS = "clear-alert";
-    private static final String CLEAR_ALERT_BORDER = "#D92D20";
+    private static final String CLEAR_ALERT_BORDER = ConsoleCardColors.toHex(ConsoleCardColors.CLEAR_ALERT);
     private static final String GROUP_MUTED_STYLE_CLASS = "group-muted";
+    private static final Map<String,String> CARD_STYLES = new ConcurrentHashMap<>();
 
     private final ConsoleWindow mConsoleWindow;
     private ConsoleCard mCard;
@@ -83,6 +91,7 @@ public class ConsoleCardView extends VBox
     private ConsoleCardActivity mActivity;
     private ConsoleCardColors.VisualState mVisualState;
     private boolean mClearAlertShown;
+    private String mCardStyle;
     private int mBaseColor;
     private boolean mUpdating;
     private boolean mEditMode;
@@ -90,13 +99,13 @@ public class ConsoleCardView extends VBox
 
     private final Label mNameLabel = ConsoleFonts.condensed(new Label());
     private final Label mTalkgroupLabel = new Label();
-    private final Label mEncryptedIndicator = new Label();
+    private Label mEncryptedIndicator;
     private final Label mStatusPill = new Label();
     private final Label mTalkerLabel = new Label();
     private final Label mSiteLabel = new Label();
     private final Label mRecentLabel = new Label();
-    private final Label mDragHandle = new Label("⠇⠇");
-    private final Button mRemoveButton = new Button("\u2715");
+    private Label mDragHandle;
+    private Button mRemoveButton;
     private final ToggleButton mMuteButton = new ToggleButton();
     private final SVGPath mMuteIcon = new SVGPath();
     private final ToggleGroup mPanToggleGroup = new ToggleGroup();
@@ -105,8 +114,9 @@ public class ConsoleCardView extends VBox
     private final ToggleButton mPanRight = new ToggleButton("R");
     private final Slider mVolumeSlider = new Slider(0, 100, 100);
     private final Label mVolumeLabel = new Label();
+    private final HBox mNameRow;
     private final HBox mControlsRow;
-    private final HBox mUnlinkedRow;
+    private HBox mUnlinkedRow;
 
     /**
      * Constructs an instance
@@ -129,27 +139,9 @@ public class ConsoleCardView extends VBox
         HBox.setHgrow(mNameLabel, Priority.ALWAYS);
         mTalkgroupLabel.getStyleClass().addAll("card-tg", "mono", "sub");
         mTalkgroupLabel.setMinWidth(Region.USE_PREF_SIZE);
-        mDragHandle.getStyleClass().add("drag-handle");
-        mDragHandle.setMinWidth(Region.USE_PREF_SIZE);
-        mDragHandle.setTooltip(new Tooltip("Drag to move this card"));
-        mRemoveButton.getStyleClass().add("card-edit-button");
-        mRemoveButton.setTooltip(new Tooltip("Remove from console"));
-        mRemoveButton.setAccessibleText("Remove from console");
-        mRemoveButton.setMinWidth(Region.USE_PREF_SIZE);
-        mRemoveButton.setOnAction(e -> mConsoleWindow.removeCard(mCard.getId()));
-        SVGPath lockIcon = new SVGPath();
-        lockIcon.setContent(LOCK_ICON);
-        lockIcon.getStyleClass().add("lock-icon");
-        lockIcon.setScaleX(0.6);
-        lockIcon.setScaleY(0.6);
-        mEncryptedIndicator.setGraphic(lockIcon);
-        mEncryptedIndicator.getStyleClass().add("encrypted-indicator");
-        mEncryptedIndicator.setMinWidth(Region.USE_PREF_SIZE);
-        mEncryptedIndicator.setTooltip(new Tooltip("Normally encrypted talkgroup: clear (unencrypted) audio plays an " +
-            "alert tone. Right-click the card to change the clear-audio alert setting."));
-        mEncryptedIndicator.setAccessibleText("Normally encrypted talkgroup");
-        HBox nameRow = new HBox(8, mDragHandle, mNameLabel, mEncryptedIndicator, mTalkgroupLabel, mRemoveButton);
-        nameRow.setAlignment(Pos.CENTER_LEFT);
+        //The edit mode controls, the encrypted indicator and the unlinked card actions are created when first needed
+        mNameRow = new HBox(8, mNameLabel, mTalkgroupLabel);
+        mNameRow.setAlignment(Pos.CENTER_LEFT);
 
         //Row 2: status pill, talker and site
         mStatusPill.getStyleClass().add("status-pill");
@@ -186,9 +178,9 @@ public class ConsoleCardView extends VBox
         mPanLeft.setUserData(AudioPan.LEFT);
         mPanBoth.setUserData(AudioPan.BOTH);
         mPanRight.setUserData(AudioPan.RIGHT);
-        mPanLeft.setTooltip(new Tooltip("Left speaker"));
-        mPanBoth.setTooltip(new Tooltip("Both speakers"));
-        mPanRight.setTooltip(new Tooltip("Right speaker"));
+        mPanLeft.setTooltip(consoleWindow.getTooltip("Left speaker"));
+        mPanBoth.setTooltip(consoleWindow.getTooltip("Both speakers"));
+        mPanRight.setTooltip(consoleWindow.getTooltip("Right speaker"));
         mPanLeft.setAccessibleText("Left speaker");
         mPanBoth.setAccessibleText("Both speakers");
         mPanRight.setAccessibleText("Right speaker");
@@ -239,7 +231,74 @@ public class ConsoleCardView extends VBox
         mControlsRow.setAlignment(Pos.CENTER_LEFT);
         mControlsRow.setPadding(new javafx.geometry.Insets(2, 0, 0, 0));
 
-        //Unlinked card actions
+        getChildren().addAll(mNameRow, statusRow, mRecentLabel, mControlsRow);
+
+        setOnContextMenuRequested(event -> {
+            createContextMenu().show(this, event.getScreenX(), event.getScreenY());
+            event.consume();
+        });
+
+        setupDragAndDrop();
+        mCard = null;
+        setCard(card);
+        setActivity(ConsoleCardActivity.idle(card.getId()));
+    }
+
+    /**
+     * Creates the edit mode controls: drag handle (first in the name row) and remove button (last in the name row).
+     */
+    private void createEditControls()
+    {
+        mDragHandle = new Label("⠇⠇");
+        mDragHandle.getStyleClass().add("drag-handle");
+        mDragHandle.setMinWidth(Region.USE_PREF_SIZE);
+        mDragHandle.setTooltip(mConsoleWindow.getTooltip("Drag to move this card"));
+        mDragHandle.setOnDragDetected(event -> {
+            if(mEditMode)
+            {
+                Dragboard dragboard = mDragHandle.startDragAndDrop(TransferMode.MOVE);
+                dragboard.setDragView(snapshot(null, null));
+                ClipboardContent content = new ClipboardContent();
+                content.putString(DRAG_PREFIX + mCard.getId());
+                dragboard.setContent(content);
+                event.consume();
+            }
+        });
+        mRemoveButton = new Button("\u2715");
+        mRemoveButton.getStyleClass().add("card-edit-button");
+        mRemoveButton.setTooltip(mConsoleWindow.getTooltip("Remove from console"));
+        mRemoveButton.setAccessibleText("Remove from console");
+        mRemoveButton.setMinWidth(Region.USE_PREF_SIZE);
+        mRemoveButton.setOnAction(e -> mConsoleWindow.removeCard(mCard.getId()));
+        mNameRow.getChildren().addFirst(mDragHandle);
+        mNameRow.getChildren().addLast(mRemoveButton);
+    }
+
+    /**
+     * Creates the encrypted talkgroup indicator (lock outline) before the talkgroup label.
+     */
+    private void createEncryptedIndicator()
+    {
+        SVGPath lockIcon = new SVGPath();
+        lockIcon.setContent(LOCK_ICON);
+        lockIcon.getStyleClass().add("lock-icon");
+        lockIcon.setScaleX(0.6);
+        lockIcon.setScaleY(0.6);
+        mEncryptedIndicator = new Label();
+        mEncryptedIndicator.setGraphic(lockIcon);
+        mEncryptedIndicator.getStyleClass().add("encrypted-indicator");
+        mEncryptedIndicator.setMinWidth(Region.USE_PREF_SIZE);
+        mEncryptedIndicator.setTooltip(mConsoleWindow.getTooltip("Normally encrypted talkgroup: clear (unencrypted) " +
+            "audio plays an alert tone. Right-click the card to change the clear-audio alert setting."));
+        mEncryptedIndicator.setAccessibleText("Normally encrypted talkgroup");
+        mNameRow.getChildren().add(mNameRow.getChildren().indexOf(mTalkgroupLabel), mEncryptedIndicator);
+    }
+
+    /**
+     * Creates the unlinked card actions row: re-link and remove.
+     */
+    private void createUnlinkedRow()
+    {
         Button relinkButton = new Button("Re-link…");
         relinkButton.getStyleClass().add("card-edit-button");
         relinkButton.setOnAction(e -> mConsoleWindow.relinkCard(mCard.getId()));
@@ -248,18 +307,7 @@ public class ConsoleCardView extends VBox
         removeUnlinkedButton.setOnAction(e -> mConsoleWindow.removeCard(mCard.getId()));
         mUnlinkedRow = new HBox(6, relinkButton, removeUnlinkedButton);
         mUnlinkedRow.setAlignment(Pos.CENTER_LEFT);
-
-        getChildren().addAll(nameRow, statusRow, mRecentLabel, mControlsRow, mUnlinkedRow);
-
-        setOnContextMenuRequested(event -> {
-            createContextMenu().show(this, event.getScreenX(), event.getScreenY());
-            event.consume();
-        });
-
-        setupDragAndDrop();
-        setCard(card);
-        setEditMode(false);
-        setActivity(ConsoleCardActivity.idle(card.getId()));
+        getChildren().add(mUnlinkedRow);
     }
 
     /**
@@ -276,6 +324,14 @@ public class ConsoleCardView extends VBox
     public String getGroupId()
     {
         return mGroupId;
+    }
+
+    /**
+     * Sets the identifier of the group that contains this card (when the card view is reused after a move).
+     */
+    public void setGroupId(String groupId)
+    {
+        mGroupId = groupId;
     }
 
     /**
@@ -315,7 +371,6 @@ public class ConsoleCardView extends VBox
 
         mGroupMuted = groupMuted;
         updateMuteButton();
-        mVisualState = null;
         updateActivity(mActivity);
     }
 
@@ -325,16 +380,6 @@ public class ConsoleCardView extends VBox
     public boolean isLinked()
     {
         return mAliasInfo.linked();
-    }
-
-    /**
-     * Indicates if the current visual state represents a call in progress (active, muted active or encrypted).
-     */
-    public boolean isInProgress()
-    {
-        return mVisualState == ConsoleCardColors.VisualState.ACTIVE ||
-            mVisualState == ConsoleCardColors.VisualState.MUTED ||
-            mVisualState == ConsoleCardColors.VisualState.ENCRYPTED;
     }
 
     /**
@@ -357,33 +402,48 @@ public class ConsoleCardView extends VBox
         mControlsRow.setManaged(linked);
         mRecentLabel.setVisible(linked);
         mRecentLabel.setManaged(linked);
-        mUnlinkedRow.setVisible(!linked);
-        mUnlinkedRow.setManaged(!linked);
-        mVisualState = null;
+
+        if(!linked && mUnlinkedRow == null)
+        {
+            createUnlinkedRow();
+        }
+
+        if(mUnlinkedRow != null)
+        {
+            mUnlinkedRow.setVisible(!linked);
+            mUnlinkedRow.setManaged(!linked);
+        }
         updateActivity(mActivity);
     }
 
     /**
-     * Updates the audio controls from the card snapshot.
+     * Updates the audio controls from the card snapshot.  Only the controls whose settings changed are updated.
      */
     public void setCard(ConsoleCard card)
     {
+        ConsoleCard previous = mCard;
         mCard = card;
         mUpdating = true;
 
         try
         {
-            mMuteButton.setSelected(card.isMuted());
-            updateMuteButton();
-
-            ToggleButton pan = switch(card.getPan())
+            if(previous == null || previous.isMuted() != card.isMuted())
             {
-                case LEFT -> mPanLeft;
-                case RIGHT -> mPanRight;
-                default -> mPanBoth;
-            };
+                mMuteButton.setSelected(card.isMuted());
+                updateMuteButton();
+            }
 
-            pan.setSelected(true);
+            if(previous == null || previous.getPan() != card.getPan())
+            {
+                ToggleButton pan = switch(card.getPan())
+                {
+                    case LEFT -> mPanLeft;
+                    case RIGHT -> mPanRight;
+                    default -> mPanBoth;
+                };
+
+                pan.setSelected(true);
+            }
 
             double volume = Math.round(card.getVolume() * 100.0);
 
@@ -394,17 +454,26 @@ public class ConsoleCardView extends VBox
 
             mVolumeLabel.setText(String.valueOf((int)Math.round(mVolumeSlider.getValue())));
             boolean encrypted = card.isTreatedAsEncrypted();
-            mEncryptedIndicator.setVisible(encrypted);
-            mEncryptedIndicator.setManaged(encrypted);
+
+            if(encrypted && mEncryptedIndicator == null)
+            {
+                createEncryptedIndicator();
+            }
+
+            if(mEncryptedIndicator != null)
+            {
+                mEncryptedIndicator.setVisible(encrypted);
+                mEncryptedIndicator.setManaged(encrypted);
+            }
         }
         finally
         {
             mUpdating = false;
         }
 
-        if(mActivity != null)
+        //The card's mute setting affects the visual state (RX or RX MUTED)
+        if(mActivity != null && previous != null && previous.isMuted() != card.isMuted())
         {
-            mVisualState = null;
             updateActivity(mActivity);
         }
     }
@@ -442,7 +511,7 @@ public class ConsoleCardView extends VBox
             tooltip = muted ? "Unmute" : "Mute";
         }
 
-        mMuteButton.setTooltip(new Tooltip(tooltip));
+        mMuteButton.setTooltip(mConsoleWindow.getTooltip(tooltip));
         mMuteButton.setAccessibleText((muted ? "Unmute " : "Mute ") + mAliasInfo.name() +
             (mGroupMuted ? ", muted by group" : ""));
     }
@@ -452,19 +521,34 @@ public class ConsoleCardView extends VBox
      */
     public void setEditMode(boolean editMode)
     {
+        if(editMode == mEditMode)
+        {
+            return;
+        }
+
         mEditMode = editMode;
-        mDragHandle.setVisible(editMode);
-        mDragHandle.setManaged(editMode);
-        mRemoveButton.setVisible(editMode);
-        mRemoveButton.setManaged(editMode);
+
+        if(editMode && mDragHandle == null)
+        {
+            createEditControls();
+        }
+
+        if(mDragHandle != null)
+        {
+            mDragHandle.setVisible(editMode);
+            mDragHandle.setManaged(editMode);
+            mRemoveButton.setVisible(editMode);
+            mRemoveButton.setManaged(editMode);
+        }
     }
 
     /**
-     * Updates the view from the card's activity snapshot.  Ignored when the activity has not changed.
+     * Updates the view from the card's activity snapshot.  Ignored when the activity has not changed (the activity
+     * router reuses the activity instance of unchanged cards, so this is usually a reference comparison).
      */
     public void setActivity(ConsoleCardActivity activity)
     {
-        if(Objects.equals(activity, mActivity) && mVisualState != null)
+        if(activity == mActivity || (Objects.equals(activity, mActivity) && mVisualState != null))
         {
             return;
         }
@@ -479,8 +563,8 @@ public class ConsoleCardView extends VBox
     {
         mActivity = activity != null ? activity : ConsoleCardActivity.idle(mCard.getId());
 
-        ConsoleCardColors.VisualState state = ConsoleCardColors.VisualState.of(mActivity.state(), isAudioMuted(),
-            mAliasInfo.linked());
+        ConsoleCardColors.VisualState state = ConsoleCardColors.VisualState.of(mActivity.state(), mActivity.hangFrom(),
+            mActivity.clearAlert(), isAudioMuted(), mAliasInfo.linked());
 
         if(state == ConsoleCardColors.VisualState.UNLINKED)
         {
@@ -501,11 +585,7 @@ public class ConsoleCardView extends VBox
         mRecentLabel.setText("Recent: " + getRecentText(mActivity.recentTalkers()));
 
         boolean clearAlert = mActivity.clearAlert() && state.isLive();
-
-        if(state != mVisualState || clearAlert != mClearAlertShown)
-        {
-            applyVisualState(state, clearAlert);
-        }
+        applyVisualState(state, clearAlert);
     }
 
     /**
@@ -536,40 +616,81 @@ public class ConsoleCardView extends VBox
     /**
      * Applies the style classes and the (alias colour dependent) fill, border and text colours for the visual state in
      * the console window's palette.  The text colours are set as the looked-up colours that the stylesheet uses for
-     * the card's labels ('-card-text' and '-card-sub').
+     * the card's labels ('-card-text' and '-card-sub').  Nothing is changed when the state, alert and colours are
+     * unchanged, so that CSS is only reapplied to the card when its appearance changes.
      */
     private void applyVisualState(ConsoleCardColors.VisualState state, boolean clearAlert)
     {
+        String style = getCardStyle(mBaseColor, state, clearAlert, mConsoleWindow.getPalette());
+
+        if(state == mVisualState && clearAlert == mClearAlertShown && style.equals(mCardStyle))
+        {
+            return;
+        }
+
+        if(state != mVisualState)
+        {
+            if(mVisualState != null && !mVisualState.getStyleClass().equals(state.getStyleClass()))
+            {
+                getStyleClass().remove(mVisualState.getStyleClass());
+            }
+
+            if(!getStyleClass().contains(state.getStyleClass()))
+            {
+                getStyleClass().add(state.getStyleClass());
+            }
+
+            setStyleClass("live", state.isLive());
+        }
+
+        setStyleClass(CLEAR_ALERT_STYLE_CLASS, clearAlert);
         mVisualState = state;
         mClearAlertShown = clearAlert;
 
-        for(ConsoleCardColors.VisualState visualState: ConsoleCardColors.VisualState.values())
+        if(!style.equals(mCardStyle))
         {
-            getStyleClass().remove(visualState.getStyleClass());
+            mCardStyle = style;
+            setStyle(style);
         }
 
-        getStyleClass().removeAll("live", CLEAR_ALERT_STYLE_CLASS);
-        getStyleClass().add(state.getStyleClass());
-
-        if(clearAlert)
-        {
-            getStyleClass().add(CLEAR_ALERT_STYLE_CLASS);
-        }
-
-        if(state.isLive())
-        {
-            getStyleClass().add("live");
-        }
-
-        ConsoleCardColors.CardPaint paint = ConsoleCardColors.getPaint(mBaseColor, state, mConsoleWindow.getPalette());
-        setStyle("-fx-background-color: " + ConsoleCardColors.toHex(paint.fill()) + "; -fx-border-color: " +
-            (clearAlert ? CLEAR_ALERT_BORDER : ConsoleCardColors.toHex(paint.border())) + "; -fx-border-style: " +
-            (paint.dashed() && !clearAlert ? "segments(6, 4)" : "solid") + "; -card-text: " +
-            ConsoleCardColors.toHex(paint.text()) + "; -card-sub: " + ConsoleCardColors.toHex(paint.secondaryText()) +
-            ";");
         mStatusPill.setText(clearAlert ? "CLEAR" : state.getLabel());
         setAccessibleText(mAliasInfo.name() + ", " + (clearAlert ? "clear audio on an encrypted talkgroup" :
             state.getLabel()));
+    }
+
+    /**
+     * Adds or removes the style class.
+     */
+    private void setStyleClass(String styleClass, boolean present)
+    {
+        boolean contains = getStyleClass().contains(styleClass);
+
+        if(present && !contains)
+        {
+            getStyleClass().add(styleClass);
+        }
+        else if(!present && contains)
+        {
+            getStyleClass().remove(styleClass);
+        }
+    }
+
+    /**
+     * Inline card style (fill, border and text colours) for the base colour, state and palette, cached since there are
+     * few distinct combinations.
+     */
+    private static String getCardStyle(int base, ConsoleCardColors.VisualState state, boolean clearAlert,
+                                       ConsoleCardColors.Palette palette)
+    {
+        String key = base + ":" + state.ordinal() + ":" + clearAlert + ":" + palette.ordinal();
+        return CARD_STYLES.computeIfAbsent(key, k -> {
+            ConsoleCardColors.CardPaint paint = ConsoleCardColors.getPaint(base, state, palette);
+            return "-fx-background-color: " + ConsoleCardColors.toHex(paint.fill()) + "; -fx-border-color: " +
+                (clearAlert ? CLEAR_ALERT_BORDER : ConsoleCardColors.toHex(paint.border())) + "; -fx-border-style: " +
+                (paint.dashed() && !clearAlert ? "segments(6, 4)" : "solid") + "; -card-text: " +
+                ConsoleCardColors.toHex(paint.text()) + "; -card-sub: " +
+                ConsoleCardColors.toHex(paint.secondaryText()) + ";";
+        });
     }
 
     /**
@@ -645,18 +766,6 @@ public class ConsoleCardView extends VBox
      */
     private void setupDragAndDrop()
     {
-        mDragHandle.setOnDragDetected(event -> {
-            if(mEditMode)
-            {
-                Dragboard dragboard = mDragHandle.startDragAndDrop(TransferMode.MOVE);
-                dragboard.setDragView(snapshot(null, null));
-                ClipboardContent content = new ClipboardContent();
-                content.putString(DRAG_PREFIX + mCard.getId());
-                dragboard.setContent(content);
-                event.consume();
-            }
-        });
-
         setOnDragOver(event -> {
             String cardId = getDraggedCardId(event.getDragboard());
 

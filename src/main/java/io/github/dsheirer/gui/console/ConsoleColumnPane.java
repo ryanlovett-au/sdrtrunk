@@ -23,27 +23,45 @@ import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.Node;
 import javafx.scene.layout.Pane;
+import javafx.scene.layout.Region;
 
 /**
- * Responsive column layout for console groups, equivalent to a CSS grid with
- * 'grid-template-columns: repeat(auto-fill, minmax(MIN, 1fr))' and 'align-items: start': as many equal-width columns
- * as fit with at least the minimum column width, children placed in rows (left to right), each child at its own
- * preferred height and each row as tall as its tallest child.
+ * Responsive masonry column layout for the console groups: as many equal-width columns as fit with at least the
+ * minimum column width, with the children placed in order, each in the currently shortest column (or, for a child that
+ * spans several columns, at the leftmost position whose spanned columns are lowest), at its own preferred height for
+ * its width (see ConsoleMasonry).  The columns pack vertically, without the gaps that a row based layout leaves under
+ * the shorter children of a row.
+ *
+ * Children that implement Spanned request a column span (clamped to the number of columns, or all columns for full
+ * width) and are told the span that they are displayed with before they are measured, e.g. to lay out their cards in
+ * the same number of columns.
+ *
+ * The layout is recalculated by JavaFX whenever the pane is resized or a child's preferred size changes (e.g. a group
+ * is collapsed or expanded, or cards are added or removed), and when children are added, removed or reordered.
+ *
+ * A snap preview (an outline of a child at another span) can be shown while a child is being resized.
  */
 public class ConsoleColumnPane extends Pane
 {
     private final double mMinimumColumnWidth;
     private final double mGap;
+    private final Region mSpanPreview = new Region();
+    private int mColumnCount = 1;
+    private double mColumnWidth;
 
     /**
      * Constructs an instance
      * @param minimumColumnWidth minimum width of each column
-     * @param gap between columns and rows
+     * @param gap between columns and between the children in a column
      */
     public ConsoleColumnPane(double minimumColumnWidth, double gap)
     {
         mMinimumColumnWidth = minimumColumnWidth;
         mGap = gap;
+        mSpanPreview.getStyleClass().add("span-preview");
+        mSpanPreview.setManaged(false);
+        mSpanPreview.setMouseTransparent(true);
+        mSpanPreview.setVisible(false);
     }
 
     @Override
@@ -53,19 +71,27 @@ public class ConsoleColumnPane extends Pane
     }
 
     /**
-     * Number of columns that fit in the content width.
+     * Number of columns in the current layout.
      */
-    private int getColumnCount(double contentWidth)
+    public int getColumnCount()
     {
-        return Math.max(1, (int)Math.floor((contentWidth + mGap) / (mMinimumColumnWidth + mGap)));
+        return mColumnCount;
     }
 
     /**
-     * Column width for the content width and column count.
+     * Column width in the current layout.
      */
-    private double getColumnWidth(double contentWidth, int columns)
+    public double getColumnWidth()
     {
-        return Math.max(0, (contentWidth - mGap * (columns - 1)) / columns);
+        return mColumnWidth;
+    }
+
+    /**
+     * Gap between columns.
+     */
+    public double getGap()
+    {
+        return mGap;
     }
 
     @Override
@@ -111,6 +137,15 @@ public class ConsoleColumnPane extends Pane
      */
     private double layout(double contentWidth, boolean apply)
     {
+        int columns = ConsoleMasonry.getColumnCount(contentWidth, mMinimumColumnWidth, mGap);
+        double columnWidth = ConsoleMasonry.getColumnWidth(contentWidth, columns, mGap);
+
+        if(apply)
+        {
+            mColumnCount = columns;
+            mColumnWidth = columnWidth;
+        }
+
         List<Node> children = getManagedChildren();
 
         if(children.isEmpty())
@@ -118,36 +153,91 @@ public class ConsoleColumnPane extends Pane
             return 0;
         }
 
-        Insets insets = getInsets();
-        int columns = getColumnCount(contentWidth);
-        double columnWidth = getColumnWidth(contentWidth, columns);
-        double y = 0;
+        int[] spans = new int[children.size()];
+        double[] heights = new double[children.size()];
 
-        for(int rowStart = 0; rowStart < children.size(); rowStart += columns)
+        for(int x = 0; x < children.size(); x++)
         {
-            double rowHeight = 0;
+            Node child = children.get(x);
+            int span = 1;
 
-            for(int column = 0; column < columns && rowStart + column < children.size(); column++)
+            if(child instanceof Spanned spanned)
             {
-                Node child = children.get(rowStart + column);
-                double height = child.prefHeight(columnWidth);
-                rowHeight = Math.max(rowHeight, height);
-
-                if(apply)
-                {
-                    child.resizeRelocate(snapPositionX(insets.getLeft() + column * (columnWidth + mGap)),
-                        snapPositionY(insets.getTop() + y), snapSizeX(columnWidth), snapSizeY(height));
-                }
+                span = ConsoleMasonry.getEffectiveSpan(spanned.getRequestedColumnSpan(), columns);
+                spanned.setDisplayedColumnSpan(span);
             }
 
-            y += rowHeight;
+            spans[x] = span;
+            heights[x] = child.prefHeight(snapSizeX(ConsoleMasonry.getSpanWidth(columnWidth, span, mGap)));
+        }
 
-            if(rowStart + columns < children.size())
+        List<ConsoleMasonry.Placement> placements = ConsoleMasonry.place(columns, spans, heights, mGap);
+
+        if(apply)
+        {
+            Insets insets = getInsets();
+
+            for(int x = 0; x < children.size(); x++)
             {
-                y += mGap;
+                ConsoleMasonry.Placement placement = placements.get(x);
+                children.get(x).resizeRelocate(
+                    snapPositionX(insets.getLeft() + placement.column() * (columnWidth + mGap)),
+                    snapPositionY(insets.getTop() + placement.y()),
+                    snapSizeX(ConsoleMasonry.getSpanWidth(columnWidth, placement.span(), mGap)),
+                    snapSizeY(placement.height()));
             }
         }
 
-        return y;
+        return ConsoleMasonry.getHeight(placements);
+    }
+
+    /**
+     * Shows the snap preview: an outline of the child at the specified span, from the child's current position
+     * (clamped to the columns to the right of the child's first column).
+     * @param child being resized
+     * @param span to preview
+     */
+    public void showSpanPreview(Node child, int span)
+    {
+        if(!getChildren().contains(mSpanPreview))
+        {
+            getChildren().add(mSpanPreview);
+        }
+
+        int column = mColumnWidth > 0 ? (int)Math.round((child.getLayoutX() - getInsets().getLeft()) /
+            (mColumnWidth + mGap)) : 0;
+        int displayed = Math.clamp(span, 1, Math.max(1, mColumnCount - column));
+        mSpanPreview.resizeRelocate(child.getLayoutX(), child.getLayoutY(),
+            snapSizeX(ConsoleMasonry.getSpanWidth(mColumnWidth, displayed, mGap)),
+            child.getLayoutBounds().getHeight());
+        mSpanPreview.setVisible(true);
+        mSpanPreview.toFront();
+    }
+
+    /**
+     * Hides the snap preview.
+     */
+    public void hideSpanPreview()
+    {
+        mSpanPreview.setVisible(false);
+        getChildren().remove(mSpanPreview);
+    }
+
+    /**
+     * A child that spans one or more columns.
+     */
+    public interface Spanned
+    {
+        /**
+         * Requested column span: the number of columns (clamped to the columns that fit), or
+         * ConsoleMasonry.FULL_WIDTH for all columns.
+         */
+        int getRequestedColumnSpan();
+
+        /**
+         * Sets the span that the child is displayed with (1 - number of columns).  Invoked before the child is
+         * measured and laid out.
+         */
+        void setDisplayedColumnSpan(int span);
     }
 }

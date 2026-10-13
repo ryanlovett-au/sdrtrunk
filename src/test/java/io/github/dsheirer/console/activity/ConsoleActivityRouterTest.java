@@ -49,7 +49,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -555,6 +557,109 @@ public class ConsoleActivityRouterTest
 
         advance(ConsoleActivityRouter.AUDIO_PRESENCE_TIMEOUT_MS);
         assertEquals(CardActivityState.HANG, state(mFireDispatchCard), "Expected hang after audio ends");
+    }
+
+    @Test
+    void callStartMarksTheLivePeriod()
+    {
+        long start = mClock.get();
+        DecodeEvent event = call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_2, start);
+        mRouter.receive(event);
+        assertEquals(start, activity(mFireDispatchCard).callStart(), "Expected the call start");
+
+        //Call progress and audio do not move the start
+        advance(500);
+        event.update(start + 500);
+        mRouter.receive(event);
+        mRouter.getLevelListener().receive(levels(mFireDispatchCard.getId()));
+        assertEquals(start, activity(mFireDispatchCard).callStart(), "Expected the start to be unchanged");
+
+        //A new call while the card is hanging continues the live period
+        advance(ConsoleActivityRouter.AUDIO_PRESENCE_TIMEOUT_MS + CALL_TIMEOUT_MS);
+        assertEquals(CardActivityState.HANG, state(mFireDispatchCard));
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_3, mClock.get()));
+        assertEquals(start, activity(mFireDispatchCard).callStart(), "Expected the live period to continue");
+
+        //After the card was idle, a new call starts a new live period
+        advance(CALL_TIMEOUT_MS + HANG_TIME_MS);
+        assertEquals(CardActivityState.IDLE, state(mFireDispatchCard));
+        assertEquals(0, activity(mFireDispatchCard).callStart(), "Expected no start while idle");
+        long second = mClock.get();
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_2, second));
+        assertEquals(second, activity(mFireDispatchCard).callStart(), "Expected a new live period");
+
+        //Audio alone starts a live period
+        advance(100);
+        mRouter.getLevelListener().receive(levels(mFiregroundCard.getId()));
+        assertEquals(mClock.get(), activity(mFiregroundCard).callStart(), "Expected audio to start a live period");
+    }
+
+    @Test
+    void hangFollowsTheStateOfTheEndedCall()
+    {
+        //Encrypted call: hangs as encrypted
+        mRouter.receive(call(DecodeEventType.CALL_GROUP_ENCRYPTED, TALKGROUP_ON_CARD, RADIO_2, mClock.get()));
+        assertNull(activity(mFireDispatchCard).hangFrom(), "No hang state during the call");
+        advance(CALL_TIMEOUT_MS);
+        assertEquals(CardActivityState.HANG, state(mFireDispatchCard));
+        assertEquals(CardActivityState.ENCRYPTED, activity(mFireDispatchCard).hangFrom(), "Encrypted hang");
+
+        //Clear call: hangs as active
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD_2, RADIO_3, mClock.get()));
+        advance(CALL_TIMEOUT_MS);
+        assertEquals(CardActivityState.ACTIVE, activity(mFiregroundCard).hangFrom(), "Clear call hang");
+
+        //Encrypted grant with clear audio in the mixer (shown as active): hangs as active, with the clear alert
+        advance(HANG_TIME_MS);
+        DecodeEvent slip = call(DecodeEventType.CALL_GROUP_ENCRYPTED, TALKGROUP_ON_CARD, RADIO_2, mClock.get());
+        mRouter.receive(slip);
+        mRouter.getClearAudioAlertListener().receive(mFireDispatchCard.getId());
+
+        for(int x = 0; x < 30; x++)
+        {
+            advance(40);
+            mRouter.getLevelListener().receive(levels(mFireDispatchCard.getId()));
+        }
+
+        assertEquals(CardActivityState.ACTIVE, state(mFireDispatchCard), "Clear audio shows as active");
+        advance(ConsoleActivityRouter.AUDIO_PRESENCE_TIMEOUT_MS);
+        ConsoleCardActivity hang = activity(mFireDispatchCard);
+        assertEquals(CardActivityState.HANG, hang.state());
+        assertEquals(CardActivityState.ACTIVE, hang.hangFrom(), "Expected the state shown at the end of the call");
+        assertTrue(hang.clearAlert(), "Expected the clear alert while hanging");
+
+        advance(HANG_TIME_MS);
+        assertNull(activity(mFireDispatchCard).hangFrom(), "No hang state when idle");
+    }
+
+    @Test
+    void snapshotsReuseUnchangedActivity()
+    {
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_2, mClock.get()));
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD_2, RADIO_3, mClock.get()));
+        ConsoleActivitySnapshot first = mRouter.getSnapshot();
+        ConsoleActivitySnapshot second = mRouter.getSnapshot();
+        assertSame(first.cards(), second.cards(), "Expected the card map to be reused when nothing changed");
+
+        //Audio on one card: only that card's activity is replaced
+        advance(40);
+        mRouter.getLevelListener().receive(levels(mFireDispatchCard.getId()));
+        ConsoleActivitySnapshot third = mRouter.getSnapshot();
+        assertNotSame(second.cards(), third.cards(), "Expected a new card map");
+        assertNotSame(second.getCard(mFireDispatchCard.getId()), third.getCard(mFireDispatchCard.getId()));
+        assertSame(second.getCard(mFiregroundCard.getId()), third.getCard(mFiregroundCard.getId()),
+            "Expected the unchanged card's activity to be reused");
+
+        //A state change (call timeout) replaces the activity without an event
+        advance(CALL_TIMEOUT_MS);
+        ConsoleActivitySnapshot fourth = mRouter.getSnapshot();
+        assertEquals(CardActivityState.HANG, fourth.getCard(mFiregroundCard.getId()).state());
+        assertNotSame(third.getCard(mFiregroundCard.getId()), fourth.getCard(mFiregroundCard.getId()));
+    }
+
+    private ConsoleCardActivity activity(ConsoleCard card)
+    {
+        return mRouter.getSnapshot().getCard(card.getId());
     }
 
     private ConsoleAudioLevels levels(String cardId)

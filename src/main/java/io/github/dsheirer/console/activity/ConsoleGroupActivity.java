@@ -18,48 +18,51 @@
  */
 package io.github.dsheirer.console.activity;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
- * Immutable summary of the call activity on the cards of a console group, shown in the header of a collapsed group.
- * Records are compared by value, so the console window only updates the header when the summary changes.
+ * Activity summary for a collapsed console group: up to MAXIMUM_ROWS rows for the group's live cards (calls in
+ * progress or hanging), the count of the other live cards ("+N more active"), the count of calls in progress (the
+ * header's "N ACTIVE") and the number of cards (for "202 talkgroups · no activity").
  *
- * The summary features one live card (active, encrypted, clear audio alert or hang).  When several cards are live, the
- * featured card is chosen by priority: a clear audio (encryption slip) alert first, then a call in progress, then a
- * hanging call, and within the same priority the card with the most recent activity (ties: the first card in display
- * order).  The other live cards are counted (e.g. "+2 more").
+ * Rows are ordered by the start of each card's live period (oldest first, ties in display order), so that rows do not
+ * jump while calls progress and new calls are appended.  When more cards are live than there are rows, the oldest are
+ * shown, except that cards with a clear audio (encryption slip) alert are always shown (in place of the newest rows).
  *
- * @param cardId identifier of the featured card, or null when no card in the group is live
- * @param state activity state of the featured card (IDLE when no card is live)
- * @param clearAlert true when the featured card's call raised a clear audio alert
- * @param muted true when the featured card's audio is muted (by the card or by its group)
- * @param text compact description of the featured card's call: the card name and the talker, e.g.
- * "23 NR Emergency · 5710363", or an empty string when no card is live
- * @param otherCount number of other live cards in the group
+ * Summaries are compared by value, so the console window can skip updating a group whose summary has not changed.
+ *
+ * @param rows shown, in display order
+ * @param liveCount number of live cards in the group (including the rows)
+ * @param activeCount number of cards with a call in progress (ACTIVE or ENCRYPTED)
+ * @param cardCount number of cards in the group
  */
-public record ConsoleGroupActivity(String cardId, CardActivityState state, boolean clearAlert, boolean muted,
-                                   String text, int otherCount)
+public record ConsoleGroupActivity(List<Row> rows, int liveCount, int activeCount, int cardCount)
 {
     /**
-     * Separator between the card name and the talker in the summary text.
+     * Maximum number of rows shown for a collapsed group.
+     */
+    public static final int MAXIMUM_ROWS = 4;
+
+    /**
+     * Separator between parts of the summary text.
      */
     public static final String SEPARATOR = " · ";
 
     /**
-     * Summary for a group without live cards.
+     * Summary for a group without cards.
      */
-    public static final ConsoleGroupActivity IDLE = new ConsoleGroupActivity(null, CardActivityState.IDLE, false, false,
-        "", 0);
+    public static final ConsoleGroupActivity IDLE = new ConsoleGroupActivity(List.of(), 0, 0, 0);
 
     /**
      * Constructs an instance
      */
     public ConsoleGroupActivity
     {
-        state = state != null ? state : CardActivityState.IDLE;
-        text = text != null ? text : "";
+        rows = rows != null ? List.copyOf(rows) : List.of();
     }
 
     /**
@@ -68,7 +71,7 @@ public record ConsoleGroupActivity(String cardId, CardActivityState state, boole
      * @param snapshot of console activity
      * @param cardNames provides the display name (alias name) of a card, or null when unknown
      * @param audioMuted indicates if a card's audio is muted (by the card or by its group)
-     * @return summary, or IDLE when no card in the group is live.
+     * @return summary
      */
     public static ConsoleGroupActivity of(List<String> cardIds, ConsoleActivitySnapshot snapshot,
                                           Function<String,String> cardNames, Predicate<String> audioMuted)
@@ -78,77 +81,66 @@ public record ConsoleGroupActivity(String cardId, CardActivityState state, boole
             return IDLE;
         }
 
-        ConsoleCardActivity featured = null;
-        int live = 0;
+        List<Live> live = new ArrayList<>();
+        int active = 0;
 
-        for(String cardId: cardIds)
+        for(int x = 0; x < cardIds.size(); x++)
         {
-            ConsoleCardActivity activity = snapshot.getCard(cardId);
+            ConsoleCardActivity activity = snapshot.cards().get(cardIds.get(x));
 
-            if(isLive(activity))
+            if(activity != null && activity.isLive())
             {
-                live++;
+                live.add(new Live(activity, x));
 
-                if(featured == null || compare(activity, featured) > 0)
+                if(activity.state().isInProgress())
                 {
-                    featured = activity;
+                    active++;
                 }
             }
         }
 
-        if(featured == null)
+        if(live.isEmpty())
         {
-            return IDLE;
+            return new ConsoleGroupActivity(List.of(), 0, 0, cardIds.size());
         }
 
-        String name = cardNames != null ? cardNames.apply(featured.cardId()) : null;
-        boolean muted = audioMuted != null && audioMuted.test(featured.cardId());
-        return new ConsoleGroupActivity(featured.cardId(), featured.state(), featured.clearAlert(), muted,
-            getText(name, featured), live - 1);
-    }
+        Comparator<Live> byStart = Comparator.comparingLong((Live l) -> l.activity().callStart())
+            .thenComparingInt(Live::index);
+        live.sort(byStart);
 
-    /**
-     * Indicates if the card activity is live: a call in progress or hanging.
-     */
-    private static boolean isLive(ConsoleCardActivity activity)
-    {
-        return activity != null && (activity.state().isInProgress() || activity.state() == CardActivityState.HANG);
-    }
+        List<Live> shown = new ArrayList<>(live.subList(0, Math.min(MAXIMUM_ROWS, live.size())));
 
-    /**
-     * Compares two live card activities by featuring priority, then by most recent activity.
-     * @return a positive value when the first activity should be featured instead of the second.
-     */
-    private static int compare(ConsoleCardActivity a, ConsoleCardActivity b)
-    {
-        int priority = Integer.compare(getPriority(a), getPriority(b));
-        return priority != 0 ? priority : Long.compare(a.lastActivity(), b.lastActivity());
-    }
-
-    /**
-     * Featuring priority: clear audio alert, then a call in progress, then a hanging call.
-     */
-    private static int getPriority(ConsoleCardActivity activity)
-    {
-        if(activity.clearAlert())
+        //Clear audio alerts beyond the shown rows replace the newest rows that are not alerts
+        for(Live candidate: live.subList(shown.size(), live.size()))
         {
-            return 3;
+            if(candidate.activity().clearAlert())
+            {
+                for(int x = shown.size() - 1; x >= 0; x--)
+                {
+                    if(!shown.get(x).activity().clearAlert())
+                    {
+                        shown.set(x, candidate);
+                        break;
+                    }
+                }
+            }
         }
 
-        return activity.state().isInProgress() ? 2 : 1;
-    }
+        shown.sort(byStart);
+        List<Row> rows = new ArrayList<>();
 
-    /**
-     * Summary text: card name (or the talkgroup when the name is unknown) and the talker name (or radio identifier).
-     */
-    private static String getText(String name, ConsoleCardActivity activity)
-    {
-        String label = name != null && !name.isBlank() ? name.trim() :
-            (activity.talkgroup() != null ? activity.talkgroup() : "Talkgroup");
-        String talker = activity.talkerName() != null && !activity.talkerName().isBlank() ? activity.talkerName() :
-            activity.talkerId();
+        for(Live entry: shown)
+        {
+            ConsoleCardActivity activity = entry.activity();
+            String name = cardNames != null ? cardNames.apply(activity.cardId()) : null;
+            String label = name != null && !name.isBlank() ? name.trim() :
+                (activity.talkgroup() != null ? activity.talkgroup() : "Talkgroup");
+            boolean muted = audioMuted != null && audioMuted.test(activity.cardId());
+            rows.add(new Row(activity.cardId(), label, activity.getTalker(), activity.state(), activity.hangFrom(),
+                muted, activity.clearAlert(), activity.callStart()));
+        }
 
-        return talker != null && !talker.isBlank() ? label + SEPARATOR + talker : label;
+        return new ConsoleGroupActivity(rows, live.size(), active, cardIds.size());
     }
 
     /**
@@ -156,52 +148,116 @@ public record ConsoleGroupActivity(String cardId, CardActivityState state, boole
      */
     public boolean isIdle()
     {
-        return cardId == null;
+        return liveCount == 0;
     }
 
     /**
-     * Count of the other live cards, e.g. "+2 more", or an empty string when there are none.
+     * Number of live cards that are not shown as rows.
+     */
+    public int moreCount()
+    {
+        return Math.max(0, liveCount - rows.size());
+    }
+
+    /**
+     * Text of the row that counts the live cards that are not shown, e.g. "+2 more active", or an empty string when
+     * all live cards are shown.
      */
     public String getMoreText()
     {
-        return otherCount > 0 ? "+" + otherCount + " more" : "";
+        return moreCount() > 0 ? "+" + moreCount() + " more active" : "";
     }
 
     /**
-     * Status of the featured card, as shown on the card's status pill: CLEAR, ENCRYPTED, RX MUTED, RX or HANG, or an
-     * empty string when no card is live.
+     * Text shown when no card is live, e.g. "202 talkgroups · no activity".
      */
-    public String getStatusLabel()
+    public String getIdleText()
     {
-        if(isIdle())
-        {
-            return "";
-        }
-
-        if(clearAlert)
-        {
-            return "CLEAR";
-        }
-
-        return switch(state)
-        {
-            case ACTIVE -> muted ? "RX MUTED" : "RX";
-            case ENCRYPTED -> "ENCRYPTED";
-            case HANG -> "HANG";
-            default -> "";
-        };
+        return (cardCount == 1 ? "1 talkgroup" : cardCount + " talkgroups") + SEPARATOR + "no activity";
     }
 
     /**
-     * Full description for tooltips and accessibility, e.g. "RX: 23 NR Emergency · 5710363, +2 more".
+     * Full description for tooltips and accessibility, e.g. "RX: Fire Dispatch · Pumper 12, ENCRYPTED: SWAT Ops,
+     * +2 more active".
      */
     public String getDescription()
     {
         if(isIdle())
         {
-            return "No activity";
+            return getIdleText();
         }
 
-        return getStatusLabel() + ": " + text + (otherCount > 0 ? ", " + getMoreText() : "");
+        StringBuilder sb = new StringBuilder();
+
+        for(Row row: rows)
+        {
+            if(!sb.isEmpty())
+            {
+                sb.append(", ");
+            }
+
+            sb.append(row.getStatusLabel()).append(": ").append(row.name());
+
+            if(!row.talker().isBlank())
+            {
+                sb.append(SEPARATOR).append(row.talker());
+            }
+        }
+
+        if(moreCount() > 0)
+        {
+            sb.append(", ").append(getMoreText());
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * Live card with its display order index, for sorting.
+     */
+    private record Live(ConsoleCardActivity activity, int index)
+    {
+    }
+
+    /**
+     * Summary row for a live card.
+     * @param cardId card identifier
+     * @param name card name (alias name), or the talkgroup when the name is unknown
+     * @param talker current talker: alias name or radio identifier, or an empty string
+     * @param state activity state (ACTIVE, ENCRYPTED or HANG)
+     * @param hangFrom while hanging: the state of the call before it ended (ACTIVE or ENCRYPTED), otherwise null
+     * @param muted true when the card's audio is muted (by the card or by its group)
+     * @param clearAlert true when the call raised a clear audio (encryption slip) alert
+     * @param callStart start of the card's live period
+     */
+    public record Row(String cardId, String name, String talker, CardActivityState state, CardActivityState hangFrom,
+                      boolean muted, boolean clearAlert, long callStart)
+    {
+        /**
+         * Constructs an instance
+         */
+        public Row
+        {
+            talker = talker != null ? talker : "";
+        }
+
+        /**
+         * Status, as shown on the card's status pill: CLEAR, ENCRYPTED, RX MUTED, RX or HANG.
+         */
+        public String getStatusLabel()
+        {
+            if(clearAlert)
+            {
+                return "CLEAR";
+            }
+
+            return switch(state)
+            {
+                case ACTIVE -> muted ? "RX MUTED" : "RX";
+                case ENCRYPTED -> "ENCRYPTED";
+                case HANG -> "HANG";
+                default -> "";
+            };
+        }
     }
 }

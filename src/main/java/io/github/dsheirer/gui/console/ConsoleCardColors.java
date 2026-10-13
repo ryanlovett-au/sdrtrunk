@@ -19,6 +19,8 @@
 package io.github.dsheirer.gui.console;
 
 import io.github.dsheirer.console.activity.CardActivityState;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Console card colour calculations (fill, border and text colours for each card state) in the light or dark console
@@ -28,6 +30,10 @@ import io.github.dsheirer.console.activity.CardActivityState;
  * (zero or black).  Active (receiving) and encrypted cards are filled with a bright colour and always have dark text,
  * so the base colour is lightened as needed so that the card's secondary text keeps a contrast ratio of at least 4.5:1
  * (WCAG AA) on the active fill.
+ *
+ * Hang cards follow the colour of the call before it ended: a tint of the base colour (active or muted call), of the
+ * encrypted colour with the encrypted border (encrypted call, HANG_ENCRYPTED), or of the clear audio alert red with a
+ * red border (call with a clear audio alert, HANG_CLEAR).
  *
  * Light palette: all card text is dark, muted and hang cards are light tints of the base colour, and the border ('ink')
  * colour is a darker shade of the base colour that also keeps 4.5:1 contrast on white, so it can be used for text
@@ -55,6 +61,15 @@ public final class ConsoleCardColors
     public static final int IDLE_BORDER = 0xAEB7C2;
     public static final int ENCRYPTED_FILL = 0xC7B5FF;
     public static final int ENCRYPTED_BORDER = 0x5B3FB8;
+    /**
+     * Clear audio (encryption slip) alert colour: card border, and the tint of a hanging card whose call raised the
+     * alert.
+     */
+    public static final int CLEAR_ALERT = 0xD92D20;
+    /**
+     * Clear audio alert status pill (and collapsed group status) fill, with white text.
+     */
+    public static final int CLEAR_ALERT_FILL = 0xB42318;
     public static final int UNLINKED_FILL = 0xE4E8ED;
     public static final int UNLINKED_BORDER = 0x8A96A3;
     public static final int WHITE = 0xFFFFFF;
@@ -65,6 +80,10 @@ public final class ConsoleCardColors
     /**
      * Default card colours for aliases that do not have a colour.
      */
+    /**
+     * Calculated paints by palette, visual state and base colour (paints are requested for every card state change).
+     */
+    private static final Map<Long,CardPaint> PAINT_CACHE = new ConcurrentHashMap<>();
     private static final int[] DEFAULT_PALETTE = {0xFF9447, 0x6CB4FF, 0x3FD6A6, 0xF5D547, 0xD9A8FF, 0x8EDB6B,
         0xFFBF5E, 0x9CCBFF};
 
@@ -208,6 +227,14 @@ public final class ConsoleCardColors
         MUTED("RX MUTED", "state-muted"),
         ENCRYPTED("ENCRYPTED", "state-encrypted"),
         HANG("HANG", "state-hang"),
+        /**
+         * Hanging after an encrypted call.
+         */
+        HANG_ENCRYPTED("HANG", "state-hang"),
+        /**
+         * Hanging after a call that raised a clear audio (encryption slip) alert.
+         */
+        HANG_CLEAR("HANG", "state-hang"),
         UNLINKED("UNLINKED", "state-unlinked");
 
         private final String mLabel;
@@ -240,7 +267,45 @@ public final class ConsoleCardColors
          */
         public boolean isLive()
         {
-            return this == ACTIVE || this == MUTED || this == ENCRYPTED || this == HANG;
+            return this == ACTIVE || this == MUTED || this == ENCRYPTED || isHang();
+        }
+
+        /**
+         * Indicates if this is a hang state (HANG, HANG_ENCRYPTED or HANG_CLEAR).
+         */
+        public boolean isHang()
+        {
+            return this == HANG || this == HANG_ENCRYPTED || this == HANG_CLEAR;
+        }
+
+        /**
+         * Visual state for the activity state, the state of a hanging call and the card settings.
+         * @param state of card activity
+         * @param hangFrom while hanging: the state of the call before it ended (ENCRYPTED or ACTIVE), or null
+         * @param clearAlert true when the (hanging) call raised a clear audio alert
+         * @param muted card setting
+         * @param linked true when the card's alias exists
+         * @return visual state
+         */
+        public static VisualState of(CardActivityState state, CardActivityState hangFrom, boolean clearAlert,
+                                     boolean muted, boolean linked)
+        {
+            VisualState visualState = of(state, muted, linked);
+
+            if(visualState == HANG)
+            {
+                if(clearAlert)
+                {
+                    return HANG_CLEAR;
+                }
+
+                if(hangFrom == CardActivityState.ENCRYPTED)
+                {
+                    return HANG_ENCRYPTED;
+                }
+            }
+
+            return visualState;
         }
 
         /**
@@ -291,6 +356,54 @@ public final class ConsoleCardColors
         {
             return contrastRatio(border, fill) >= 3.0 ? border : text;
         }
+    }
+
+    /**
+     * Colours for a collapsed group summary row (on the group panel background).
+     * @param dot RGB fill of the colour dot: the colour of the card's call (alias colour, encrypted colour, or red for
+     * a clear audio alert)
+     * @param dotOutline RGB outline of the colour dot, with at least 3:1 contrast on the group panel
+     * @param statusFill RGB status pill fill: the card's fill for its state (red for a clear audio alert)
+     * @param statusBorder RGB status pill border: the card's border for its state
+     * @param statusText RGB status pill text, with at least 4.5:1 contrast on the status fill
+     */
+    public record SummaryPaint(int dot, int dotOutline, int statusFill, int statusBorder, int statusText)
+    {
+    }
+
+    /**
+     * Colours for a collapsed group summary row: the dot follows the colour of the card's call (the alias colour for
+     * active, muted and hanging calls, the encrypted colour for encrypted calls and hanging encrypted calls, red for a
+     * clear audio alert), and the status pill is drawn like the card for its state.
+     * @param base RGB base colour of the card (see getBaseColor())
+     * @param state visual state of the card
+     * @param clearAlert true when the card's call raised a clear audio alert
+     * @param palette console palette
+     * @return paint
+     */
+    public static SummaryPaint getSummaryPaint(int base, VisualState state, boolean clearAlert, Palette palette)
+    {
+        if(clearAlert || state == VisualState.HANG_CLEAR)
+        {
+            return new SummaryPaint(CLEAR_ALERT, CLEAR_ALERT, CLEAR_ALERT_FILL, CLEAR_ALERT_FILL, WHITE);
+        }
+
+        CardPaint paint = getPaint(base, state, palette);
+        int dot;
+        int outline;
+
+        if(state == VisualState.ENCRYPTED || state == VisualState.HANG_ENCRYPTED)
+        {
+            dot = palette.mEncryptedFill;
+            outline = palette.mEncryptedBorder;
+        }
+        else
+        {
+            dot = base;
+            outline = palette.isDark() ? base : getInkColor(base);
+        }
+
+        return new SummaryPaint(dot, outline, paint.fill(), paint.border(), paint.text());
     }
 
     /**
@@ -382,6 +495,15 @@ public final class ConsoleCardColors
      */
     public static CardPaint getPaint(int base, VisualState state, Palette palette)
     {
+        long key = ((long)palette.ordinal() << 40) | ((long)state.ordinal() << 32) | (base & 0xFFFFFFFFL);
+        return PAINT_CACHE.computeIfAbsent(key, k -> computePaint(base, state, palette));
+    }
+
+    /**
+     * Calculates the card fill, border and text colours for the visual state.
+     */
+    private static CardPaint computePaint(int base, VisualState state, Palette palette)
+    {
         if(!palette.isDark())
         {
             int ink = getInkColor(base);
@@ -393,6 +515,10 @@ public final class ConsoleCardColors
                 case MUTED -> new CardPaint(mix(base, IDLE_FILL, 1.0 - MUTED_TINT), ink, true, TEXT, secondary);
                 case ENCRYPTED -> new CardPaint(ENCRYPTED_FILL, ENCRYPTED_BORDER, false, TEXT, secondary);
                 case HANG -> new CardPaint(mix(base, IDLE_FILL, 1.0 - HANG_TINT), ink, false, TEXT, secondary);
+                case HANG_ENCRYPTED -> new CardPaint(mix(ENCRYPTED_BORDER, IDLE_FILL, 1.0 - HANG_TINT),
+                    ENCRYPTED_BORDER, false, TEXT, secondary);
+                case HANG_CLEAR -> new CardPaint(mix(CLEAR_ALERT, IDLE_FILL, 1.0 - HANG_TINT), CLEAR_ALERT, false,
+                    TEXT, secondary);
                 case UNLINKED -> new CardPaint(UNLINKED_FILL, UNLINKED_BORDER, true, TEXT, secondary);
                 default -> new CardPaint(IDLE_FILL, IDLE_BORDER, false, TEXT, secondary);
             };
@@ -407,6 +533,10 @@ public final class ConsoleCardColors
                 palette.mActiveText, palette.mActiveSecondaryText);
             case HANG -> new CardPaint(getTint(base, palette.mHangTint, palette), base, false, palette.mTintText,
                 palette.mTintSecondaryText);
+            case HANG_ENCRYPTED -> new CardPaint(getTint(palette.mEncryptedFill, palette.mHangTint, palette),
+                palette.mEncryptedBorder, false, palette.mTintText, palette.mTintSecondaryText);
+            case HANG_CLEAR -> new CardPaint(getTint(CLEAR_ALERT, palette.mHangTint, palette), CLEAR_ALERT, false,
+                palette.mTintText, palette.mTintSecondaryText);
             case UNLINKED -> new CardPaint(palette.mUnlinkedFill, palette.mUnlinkedBorder, true, palette.mIdleText,
                 palette.mIdleSecondaryText);
             default -> new CardPaint(palette.mIdleFill, palette.mIdleBorder, false, palette.mIdleText,

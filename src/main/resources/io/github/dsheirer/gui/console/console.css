@@ -60,7 +60,8 @@
     -console-group-header-bg: #14365E;
     -console-group-header-text: #FFFFFF;
     -console-group-active: #FFC069;
-    -console-group-summary-idle: #C9D6E6;
+    -console-resize-handle: #6B7A8C;
+    -console-span-preview-bg: rgba(255, 192, 105, 0.18);
     -console-group-button-border: #3A5A80;
     -console-group-mute-border: #5C7899;
     -console-group-button-hover: #1E4373;
@@ -148,7 +149,8 @@
     -console-group-header-bg: #18202A;
     -console-group-header-text: #E6EDF3;
     -console-group-active: #FFC069;
-    -console-group-summary-idle: #9FB0C0;
+    -console-resize-handle: #8593A3;
+    -console-span-preview-bg: rgba(255, 192, 105, 0.12);
     -console-group-button-border: #5C6B7E;
     -console-group-mute-border: #5C6B7E;
     -console-group-button-hover: #26303D;
@@ -569,11 +571,6 @@
     -fx-spacing: 2;
 }
 
-/* A collapsed group is its header only */
-.group.collapsed .group-header {
-    -fx-background-radius: 3;
-}
-
 .group.drop-target {
     -fx-border-color: -console-drop-border;
 }
@@ -686,35 +683,6 @@
     -fx-stroke: -console-group-muted-icon;
 }
 
-/* Collapsed group activity summary row (aligned with the group name) */
-.group-summary {
-    -fx-padding: 0 0 4 40;
-    -fx-min-height: 24;
-}
-
-/* Badge fill and text colour are applied inline (the featured card's fill, or red for a clear audio alert) */
-.group-summary-badge {
-    -fx-background-radius: 10;
-    -fx-border-radius: 10;
-    -fx-padding: 2 9 2 7;
-}
-
-.group-header .label.group-summary-text {
-    -fx-font-size: 12px;
-    -fx-font-weight: bold;
-}
-
-.group-header .label.group-summary-more {
-    -fx-font-size: 12px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -console-group-active;
-}
-
-.group-header .label.group-summary-idle {
-    -fx-font-size: 12px;
-    -fx-text-fill: -console-group-summary-idle;
-}
-
 .group-cards {
     -fx-padding: 8;
     -fx-spacing: 6;
@@ -727,6 +695,76 @@
 .console-root .label.group-empty {
     -fx-text-fill: -console-text-secondary;
     -fx-padding: 6 2 6 2;
+}
+
+/* Collapsed group summary body (in place of the cards, styled like the empty group body): a row per live card with a
+   colour dot, the talkgroup name, the talker and a status pill (dot and pill colours are applied inline from
+   ConsoleCardColors.getSummaryPaint()), then "+N more active", or "N talkgroups · no activity" */
+.group-summary-body {
+    -fx-spacing: 2;
+}
+
+.group-summary-row {
+    -fx-padding: 3 2 3 2;
+    -fx-min-height: 26;
+}
+
+.console-root .label.group-summary-name {
+    -fx-text-fill: -console-text;
+    -fx-font-weight: bold;
+}
+
+.console-root .label.group-summary-talker {
+    -fx-text-fill: -console-text-secondary;
+}
+
+.console-root .label.group-summary-status {
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-padding: 1 6 1 6;
+    -fx-background-radius: 2;
+    -fx-border-radius: 2;
+}
+
+.console-root .label.group-summary-more {
+    -fx-text-fill: -console-text-secondary;
+    -fx-font-weight: bold;
+    -fx-padding: 3 2 3 20;
+}
+
+/* Edit mode resize handle on the group's right edge (drag to change the group's column span) */
+.group-resize-handle {
+    -fx-background-color: transparent;
+    -fx-background-radius: 0 3 3 0;
+}
+
+.group-resize-handle:hover {
+    -fx-background-color: -console-drop-bg;
+}
+
+.group-resize-grip {
+    -fx-min-width: 4;
+    -fx-pref-width: 4;
+    -fx-max-width: 4;
+    -fx-min-height: 36;
+    -fx-pref-height: 36;
+    -fx-max-height: 36;
+    -fx-background-color: -console-resize-handle;
+    -fx-background-radius: 2;
+}
+
+.group-resize-handle:hover .group-resize-grip {
+    -fx-background-color: -console-drop-border;
+}
+
+/* Snap preview while a group is resized */
+.span-preview {
+    -fx-background-color: -console-span-preview-bg;
+    -fx-border-color: -console-drop-border;
+    -fx-border-width: 2;
+    -fx-border-style: segments(6, 4);
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
 }
 
 .add-card-button {

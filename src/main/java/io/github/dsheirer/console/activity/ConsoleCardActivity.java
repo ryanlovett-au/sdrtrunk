@@ -33,10 +33,14 @@ import java.util.List;
  * @param recentTalkers distinct radios recently heard on the card, most recent first
  * @param lastActivity timestamp of the most recent call activity, milliseconds since epoch, or 0
  * @param clearAlert true while the card's current (or hanging) call raised a clear audio (encryption slip) alert
+ * @param callStart start of the card's current live period (calls in progress and hanging, without an idle gap),
+ * milliseconds since epoch, or 0 when the card is idle.  Used to order live cards stably (oldest first).
+ * @param hangFrom while the state is HANG: the state of the call before it ended (ACTIVE or ENCRYPTED), so that the
+ * hang colour follows the colour the card showed during the call; otherwise null
  */
 public record ConsoleCardActivity(String cardId, CardActivityState state, String talkerId, String talkerName,
                                   String site, String talkgroup, List<RecentTalker> recentTalkers, long lastActivity,
-                                  boolean clearAlert)
+                                  boolean clearAlert, long callStart, CardActivityState hangFrom)
 {
     /**
      * Constructs an instance
@@ -44,6 +48,17 @@ public record ConsoleCardActivity(String cardId, CardActivityState state, String
     public ConsoleCardActivity
     {
         recentTalkers = recentTalkers != null ? List.copyOf(recentTalkers) : List.of();
+        hangFrom = state == CardActivityState.HANG ? (hangFrom != null ? hangFrom : CardActivityState.ACTIVE) : null;
+    }
+
+    /**
+     * Constructs an instance without a call start time (0), where a hanging call was not encrypted.
+     */
+    public ConsoleCardActivity(String cardId, CardActivityState state, String talkerId, String talkerName, String site,
+                               String talkgroup, List<RecentTalker> recentTalkers, long lastActivity,
+                               boolean clearAlert)
+    {
+        this(cardId, state, talkerId, talkerName, site, talkgroup, recentTalkers, lastActivity, clearAlert, 0, null);
     }
 
     /**
@@ -53,7 +68,30 @@ public record ConsoleCardActivity(String cardId, CardActivityState state, String
      */
     public static ConsoleCardActivity idle(String cardId)
     {
-        return new ConsoleCardActivity(cardId, CardActivityState.IDLE, null, null, null, null, List.of(), 0, false);
+        return new ConsoleCardActivity(cardId, CardActivityState.IDLE, null, null, null, null, List.of(), 0, false, 0,
+            null);
+    }
+
+    /**
+     * Indicates if the card is live: a call in progress (ACTIVE or ENCRYPTED) or hanging.
+     */
+    public boolean isLive()
+    {
+        return state.isInProgress() || state == CardActivityState.HANG;
+    }
+
+    /**
+     * Talker for compact displays: the talker's alias name, or the radio identifier when there is no name.
+     * @return talker or an empty string.
+     */
+    public String getTalker()
+    {
+        if(talkerName != null && !talkerName.isBlank())
+        {
+            return talkerName;
+        }
+
+        return talkerId != null ? talkerId : "";
     }
 
     /**
