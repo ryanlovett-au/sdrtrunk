@@ -103,8 +103,9 @@ Network configuration monitors ──► structured control channel snapshot ─
    and console placement (one group per tag, or one named group; one card per alias, aliases already on the console
    stay put). Applied as one undoable sheet operation (`RadioReferenceImport`, `AliasSheetModel.applyRadioReferenceImport`).
    The alias XML has no field for the RadioReference mode, so it is not persisted: the import result lists
-   {alias UUID, mode} and the sheet model keeps it for the session (`getRadioReferenceMode`) for a later step such as
-   a console clear-audio alert for encrypted talkgroups.
+   {alias UUID, mode} and the sheet model keeps it for the session (`getRadioReferenceMode`). Talkgroups listed as
+   encrypted (E, TE) that end up on a console card get their clear-audio alert set to Always (unless the card already
+   has an explicit Always/Never setting), so a slip alerts from the first call instead of after learning.
 
 ## Console window menus and header
 

@@ -32,6 +32,7 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupFormat;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupFormatter;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.console.ClearAudioAlert;
 import io.github.dsheirer.console.ConsoleCard;
 import io.github.dsheirer.console.ConsoleGroup;
 import io.github.dsheirer.console.ConsoleLayout;
@@ -1156,6 +1157,18 @@ public class AliasSheetModel
         for(RadioReferenceImport.ModeAssignment assignment: modes)
         {
             mRadioReferenceModes.put(assignment.aliasUuid(), assignment.mode());
+
+            //Talkgroups that RadioReference lists as encrypted alert on any clear audio from the first call, rather
+            //than after the console learns that the talkgroup is encrypted.  A card's explicit setting is kept.
+            if(mConsoleLayoutManager != null && assignment.mode() != null && assignment.mode().isEncrypted())
+            {
+                ConsoleCard card = mConsoleLayoutManager.getCardForAlias(assignment.aliasUuid());
+
+                if(card != null && card.getClearAudioAlert() == ClearAudioAlert.AUTO)
+                {
+                    mConsoleLayoutManager.setCardClearAudioAlert(card.getId(), ClearAudioAlert.ALWAYS);
+                }
+            }
         }
 
         return new RadioReferenceImport.Result(added.size(), updated, skipped, cards, List.copyOf(createdGroups),

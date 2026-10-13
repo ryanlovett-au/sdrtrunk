@@ -23,6 +23,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.console.ClearAudioAlert;
 import io.github.dsheirer.console.ConsoleCard;
 import io.github.dsheirer.console.ConsoleGroup;
 import io.github.dsheirer.console.ConsoleLayoutManager;
@@ -177,6 +178,24 @@ public class RadioReferenceImportTest
         table = RadioReferenceTable.parse("DEC\tHEX\tMode\tAlpha Tag\tDescription\tTag\n4000\tfa0\tD\t \t\tX\n");
         plan = RadioReferenceImport.plan(mModel, table, options());
         assertEquals("TG 4000", row(plan, 4000).name());
+    }
+
+    @Test
+    void encryptedTalkgroupsOnConsoleAlwaysAlertOnClearAudio()
+    {
+        RadioReferenceImport.Plan plan = RadioReferenceImport.plan(mModel, mTable, options()
+            .setConsoleMode(RadioReferenceImport.ConsoleMode.GROUP_PER_TAG));
+        mModel.applyRadioReferenceImport(plan);
+
+        //E and TE: always alert; DE (partially encrypted) and D: console learns (auto)
+        assertSame(ClearAudioAlert.ALWAYS, mConsoleLayoutManager.getCardForAlias(aliasFor(1001).getUuid())
+            .getClearAudioAlert());
+        assertSame(ClearAudioAlert.ALWAYS, mConsoleLayoutManager.getCardForAlias(aliasFor(1002).getUuid())
+            .getClearAudioAlert());
+        assertSame(ClearAudioAlert.AUTO, mConsoleLayoutManager.getCardForAlias(aliasFor(1003).getUuid())
+            .getClearAudioAlert());
+        assertSame(ClearAudioAlert.AUTO, mConsoleLayoutManager.getCardForAlias(aliasFor(753).getUuid())
+            .getClearAudioAlert());
     }
 
     @Test
