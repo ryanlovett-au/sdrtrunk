@@ -127,7 +127,12 @@ import org.slf4j.LoggerFactory;
  *
  * Updates: card activity is pulled from the ConsoleActivityRouter as an immutable snapshot by a 10 Hz timeline while
  * the window is showing (call events are never dispatched to the JavaFX thread individually).  Only the cards whose
- * activity changed are updated (the router reuses the activity instances of unchanged cards).  Console layout changes
+ * activity changed are updated (the router reuses the activity instances of unchanged cards).  While the groups are
+ * being scrolled (and until 150 ms after the last scroll movement) the snapshots are not applied to the cards, group
+ * summaries and activity log, so that scrolling only redraws (no CSS or layout work for changed cards); the latest
+ * snapshot is applied by the first refresh after scrolling stops.  The router still takes a snapshot on every refresh,
+ * and audio and activity routing are not affected.  The clock and the control channel strip (outside the scrolled
+ * area) keep updating; alias changes are applied after scrolling stops.  Console layout changes
  * are received from the ConsoleLayoutManager: card setting changes (including encryption learning after each call) and
  * card re-binding update the affected card in place, group collapsed/muted/span changes update the group in place, and
  * all other changes (including LAYOUT_LOADED on playlist switch) synchronise the groups and cards with the layout,
@@ -145,6 +150,11 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     private static final String TITLE = "sdrtrunk - Radio Console";
     private static final String STYLESHEET = "console.css";
     private static final Duration REFRESH_INTERVAL = Duration.millis(100);
+    /**
+     * Time after the last scroll movement after which card activity updates resume (applied by the next refresh, so
+     * 150 - 250 ms after scrolling stops).
+     */
+    private static final long SCROLL_IDLE_TIME_MS = 150;
     private static final double MINIMUM_COLUMN_WIDTH = 300;
     private static final double COLUMN_GAP = 12;
     /**
@@ -168,6 +178,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     private final AtomicBoolean mRebuildPending = new AtomicBoolean();
     private final AtomicBoolean mSettingsPending = new AtomicBoolean();
     private final Map<String,Tooltip> mTooltips = new HashMap<>();
+    private final ScrollIdleDetector mScrollIdleDetector = new ScrollIdleDetector(SCROLL_IDLE_TIME_MS);
     private Map<String,ConsoleGroupView> mGroupViews = new LinkedHashMap<>();
     private Map<String,ConsoleCardView> mCardViews = new LinkedHashMap<>();
     private Map<String,CardInfo> mCardInfos = new HashMap<>();
@@ -184,6 +195,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     private volatile boolean mAliasesChanged;
     private boolean mUpdatingSettings;
     private long mLastSecond = -1;
+    private long mAliasRefreshSecond = -1;
 
     private Label mClockLabel;
     private ToggleButton mEditButton;
@@ -711,6 +723,10 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         scrollPane.setMinHeight(120);
         scrollPane.maxHeightProperty().bind(Bindings.createDoubleBinding(() -> content.getHeight() +
             scrollPane.snappedTopInset() + scrollPane.snappedBottomInset() + 2, content.heightProperty()));
+
+        //Scroll movement (wheel or trackpad, scroll bar, keyboard) pauses the card activity updates (see refresh())
+        scrollPane.vvalueProperty().addListener((observable, oldValue, newValue) ->
+            mScrollIdleDetector.scrolled(getMonotonicTimeMs()));
         return scrollPane;
     }
 
@@ -1153,13 +1169,22 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
 
     /**
      * Periodic (10 Hz) refresh while the window is showing: clock, card activity and the activity log, and once per
-     * second the control channel strip and alias changes.
+     * second the control channel strip and alias changes.  While the groups are being scrolled, the card activity, the
+     * group summaries, the activity log and alias changes are not updated (the latest snapshot is applied when
+     * scrolling stops), so that the scrolled content does not need CSS and layout passes while it moves.
      */
     private void refresh()
     {
         try
         {
-            updateActivity(mActivityRouter.getSnapshot());
+            //The router takes a snapshot on every refresh (it also completes calls for encryption learning)
+            ConsoleActivitySnapshot snapshot = mActivityRouter.getSnapshot();
+            boolean scrolling = mScrollIdleDetector.isScrolling(getMonotonicTimeMs());
+
+            if(!scrolling)
+            {
+                updateActivity(snapshot);
+            }
 
             long second = System.currentTimeMillis() / 1000;
 
@@ -1168,17 +1193,27 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
                 mLastSecond = second;
                 updateClock();
                 updateControlChannels();
+            }
 
-                if(mAliasesChanged)
-                {
-                    refreshAliasInfo();
-                }
+            //Alias changes are applied once per second (and after scrolling stops)
+            if(mAliasesChanged && !scrolling && (second != mAliasRefreshSecond))
+            {
+                mAliasRefreshSecond = second;
+                refreshAliasInfo();
             }
         }
         catch(Exception e)
         {
             mLog.error("Error refreshing console window", e);
         }
+    }
+
+    /**
+     * Monotonic time in milliseconds, for scroll idle detection.
+     */
+    private static long getMonotonicTimeMs()
+    {
+        return System.nanoTime() / 1_000_000;
     }
 
     /**

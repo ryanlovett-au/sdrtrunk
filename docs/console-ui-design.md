@@ -232,6 +232,41 @@ each with its own popup scene, per card), 0.3–2.4 s of JavaFX thread time and 
 | Live heap after show (all expanded / 202 collapsed) | 172 MB / 194 MB | 113 MB / 94 MB |
 | Collapse / expand the 202 card group | 85 / 62 ms | 32 / 96 ms (cards created on expand) |
 
+### Scrolling
+
+Measured with a second temporary harness (the same 300 cards in groups of 10 (full width), 202, 66 (2 columns), 8, 8 (muted)
+and 6, about 10 calls updating at 10 Hz including a clear audio alert, the window at 1440×900 on a 60 Hz Retina display,
+JavaFX Metal pipeline), scrolling 6000 px down and up in 6 s by animating the scroll position and by synthesized scroll
+events, recording the frame interval of every pulse. Scrolling redraws every visible card on every frame, and the cost
+was in rendering, not in CSS or layout (about 1 ms per pulse): Prism draws region backgrounds with corner radii that are
+non-uniform or larger than 0 and at most 4 px (JDK-8087965 workaround) with the software path rasterizer and a mask
+texture upload on every frame, and so are dashed borders; effects (the theme's slider thumb drop shadow, the clear
+audio glow) render offscreen on every frame. Each card had five such backgrounds (card 3 px, status pill 2 px, volume
+track 3 px, first and last pan segments 5 0 0 5) and a shadow.
+
+- `console.css` avoids the slow paths with the same geometry: fills under an opaque border use a larger radius that the
+  border hides (card 5 px under the 2 px border, group 4.5 px), the status pill and the volume track are drawn as
+  rounded borders around or instead of a square fill (borders use the fast path for any uniform radius), the pan group
+  draws the segments' shared background (selected end segments use a rounded plus a square fill), and the slider thumb
+  has no shadow. The group header fill is drawn by a rounded and a plain rectangle (`ConsoleGroupView.GroupHeader`). The
+  clear audio glow is drawn as 1 px translucent border rings outside the card (inline style), matching the old shadow's
+  falloff, and the "muted by group" dashed outline of the mute button is a dashed shape, which Prism draws from a cached
+  mask. Dashed card borders (muted call, unlinked) remain, as only a few are shown at a time. Renders before and after
+  differ only in corner anti-aliasing pixels, the dash phase of the group muted outline and the glow approximation.
+- While the groups are scrolled (scroll position changes, any input) and until 150 ms after the last movement
+  (`ScrollIdleDetector`), the 10 Hz refresh does not apply activity snapshots to the cards, group summaries and activity
+  log, nor alias changes; the next refresh applies the latest snapshot (150–250 ms after scrolling stops). The router
+  still takes a snapshot on every refresh; audio, routing and the log data are not affected. The clock and the control
+  channel strip keep updating.
+
+| Scrolling, light palette (dark is the same) | Frame interval median / p95 / max | Frames > 20 ms (of ~360 in 6 s) | CSS + layout per pulse p95 |
+|---|---|---|---|
+| Before | 173–204 / 177–359 / 367 ms (5–6 fps) | all | 1.9–3 ms |
+| Rendering changes | 16.7 / 17.5–25.6 / 17.8–133 ms | 0–26 | 0.9–1.3 ms |
+| Rendering changes + update pause | 16.7 / 17.4–17.6 / 17.6–33 ms | 0–1 | 0.01–0.1 ms |
+
+Virtualising off-screen cards was not needed. The scene still has about 9,900 nodes with everything expanded.
+
 ## Activity log: console only / all traffic
 
 The activity log title bar has a segmented "Console only | All traffic" toggle, persisted as `activityLogShowAll` in

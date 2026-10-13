@@ -45,6 +45,7 @@ import javafx.scene.input.TransferMode;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.shape.SVGPath;
 
@@ -79,8 +80,19 @@ public class ConsoleCardView extends VBox
     private static final String UNMUTED_ICON = "M11 5 L6 9 H3 V15 H6 L11 19 Z M15.5 8.5 A5 5 0 0 1 15.5 15.5 " +
         "M18.5 5.5 A9 9 0 0 1 18.5 18.5";
     private static final String LOCK_ICON = "M7 11 V8 A5 5 0 0 1 17 8 V11 M5 11 H19 V21 H5 Z";
+    /**
+     * Outline of the 44 x 44 px mute button (1 px stroke centred 0.5 px inside the edge, 6 px corner radius, like the
+     * button's border), drawn dashed when the card is muted by its group.
+     */
+    private static final String MUTE_BUTTON_OUTLINE = "M6.5 0.5 H37.5 A6 6 0 0 1 43.5 6.5 V37.5 A6 6 0 0 1 37.5 43.5 " +
+        "H6.5 A6 6 0 0 1 0.5 37.5 V6.5 A6 6 0 0 1 6.5 0.5 Z";
     private static final String CLEAR_ALERT_STYLE_CLASS = "clear-alert";
-    private static final String CLEAR_ALERT_BORDER = ConsoleCardColors.toHex(ConsoleCardColors.CLEAR_ALERT);
+    /**
+     * Clear audio alert border: the red card border and a glow of translucent red rings outside the card (border
+     * strokes with negative insets, concentric with the card's rounded corners), which does not change the card size
+     * and does not need a shadow effect (which is rendered offscreen on every frame).
+     */
+    private static final String CLEAR_ALERT_BORDER = clearAlertBorder();
     private static final String GROUP_MUTED_STYLE_CLASS = "group-muted";
     private static final Map<String,String> CARD_STYLES = new ConcurrentHashMap<>();
 
@@ -108,6 +120,7 @@ public class ConsoleCardView extends VBox
     private Button mRemoveButton;
     private final ToggleButton mMuteButton = new ToggleButton();
     private final SVGPath mMuteIcon = new SVGPath();
+    private StackPane mGroupMutedGraphic;
     private final ToggleGroup mPanToggleGroup = new ToggleGroup();
     private final ToggleButton mPanLeft = new ToggleButton("L");
     private final ToggleButton mPanBoth = new ToggleButton("B");
@@ -496,6 +509,8 @@ public class ConsoleCardView extends VBox
             mMuteButton.getStyleClass().remove(GROUP_MUTED_STYLE_CLASS);
         }
 
+        setGroupMutedOutline(groupMutedOnly);
+
         String tooltip;
 
         if(groupMutedOnly)
@@ -514,6 +529,42 @@ public class ConsoleCardView extends VBox
         mMuteButton.setTooltip(mConsoleWindow.getTooltip(tooltip));
         mMuteButton.setAccessibleText((muted ? "Unmute " : "Mute ") + mAliasInfo.name() +
             (mGroupMuted ? ", muted by group" : ""));
+    }
+
+    /**
+     * Shows or hides the dashed "muted by group" outline of the mute button: the button's graphic is the icon, or the
+     * outline (created when first needed) with the icon on top.
+     */
+    private void setGroupMutedOutline(boolean shown)
+    {
+        if(shown)
+        {
+            if(mGroupMutedGraphic == null)
+            {
+                SVGPath outline = new SVGPath();
+                outline.setContent(MUTE_BUTTON_OUTLINE);
+                outline.getStyleClass().add("group-muted-outline");
+                mGroupMutedGraphic = new StackPane(outline);
+            }
+
+            if(mMuteButton.getGraphic() != mGroupMutedGraphic)
+            {
+                mMuteButton.setGraphic(null);
+                mGroupMutedGraphic.getChildren().add(mMuteIcon);
+                mMuteButton.setGraphic(mGroupMutedGraphic);
+            }
+        }
+        else if(mMuteButton.getGraphic() != mMuteIcon)
+        {
+            mMuteButton.setGraphic(null);
+
+            if(mGroupMutedGraphic != null)
+            {
+                mGroupMutedGraphic.getChildren().remove(mMuteIcon);
+            }
+
+            mMuteButton.setGraphic(mMuteIcon);
+        }
     }
 
     /**
@@ -685,12 +736,41 @@ public class ConsoleCardView extends VBox
         String key = base + ":" + state.ordinal() + ":" + clearAlert + ":" + palette.ordinal();
         return CARD_STYLES.computeIfAbsent(key, k -> {
             ConsoleCardColors.CardPaint paint = ConsoleCardColors.getPaint(base, state, palette);
-            return "-fx-background-color: " + ConsoleCardColors.toHex(paint.fill()) + "; -fx-border-color: " +
-                (clearAlert ? CLEAR_ALERT_BORDER : ConsoleCardColors.toHex(paint.border())) + "; -fx-border-style: " +
-                (paint.dashed() && !clearAlert ? "segments(6, 4)" : "solid") + "; -card-text: " +
+            return "-fx-background-color: " + ConsoleCardColors.toHex(paint.fill()) + "; " +
+                (clearAlert ? CLEAR_ALERT_BORDER : "-fx-border-color: " + ConsoleCardColors.toHex(paint.border()) +
+                    "; -fx-border-style: " + (paint.dashed() ? "segments(6, 4)" : "solid") + ";") + " -card-text: " +
                 ConsoleCardColors.toHex(paint.text()) + "; -card-sub: " +
                 ConsoleCardColors.toHex(paint.secondaryText()) + ";";
         });
+    }
+
+    /**
+     * Inline border style for a card with a clear audio alert: the 2 px red border (radius 3, as in console.css) and a
+     * glow of 1 px rings outside it whose opacities follow the gaussian red shadow that the card had before (about 8 px
+     * wide).  Each ring's radius keeps it concentric with the card's outer corner (the border's outer edge has a 4 px
+     * radius; a 1 px ring's outer edge is 0.5 px outside its radius).
+     */
+    private static String clearAlertBorder()
+    {
+        int rgb = ConsoleCardColors.CLEAR_ALERT;
+        String color = ((rgb >> 16) & 0xFF) + ", " + ((rgb >> 8) & 0xFF) + ", " + (rgb & 0xFF);
+        double[] opacities = {0.68, 0.5, 0.35, 0.23, 0.13, 0.07, 0.035};
+        StringBuilder colors = new StringBuilder(ConsoleCardColors.toHex(rgb));
+        StringBuilder widths = new StringBuilder("2");
+        StringBuilder insets = new StringBuilder("0");
+        StringBuilder radii = new StringBuilder("3");
+
+        for(int x = 0; x < opacities.length; x++)
+        {
+            int inset = -(x + 1);
+            colors.append(", rgba(").append(color).append(", ").append(opacities[x]).append(")");
+            widths.append(", 1");
+            insets.append(", ").append(inset);
+            radii.append(", ").append(3.5 - inset);
+        }
+
+        return "-fx-border-color: " + colors + "; -fx-border-width: " + widths + "; -fx-border-insets: " + insets +
+            "; -fx-border-radius: " + radii + "; -fx-border-style: solid;";
     }
 
     /**

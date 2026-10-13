@@ -11,6 +11,14 @@
  * the '-card-text' and '-card-sub' tokens), from ConsoleCardColors, which keeps at least 4.5:1 text contrast on every
  * card fill.  Every token pair used for text keeps 4.5:1 contrast (3:1 for non-text indicators) in both palettes; see
  * ConsoleCardColorsTest, which reads the token values from this file.
+ *
+ * Rendering cost: JavaFX draws region backgrounds whose corner radii are non-uniform or larger than 0 and at most 4 px
+ * with a software path rasterizer and a mask texture upload on every frame (the shader fast path is only used for
+ * uniform radii above 4 px; borders use the fast path for any uniform radius), and effects (shadows) render offscreen
+ * on every frame.  While the groups are scrolled every visible card is redrawn on every frame, so the rules for the
+ * groups, cards and card controls avoid these: backgrounds that sit under an opaque border use a larger radius that the
+ * border hides, small rounded fills (status pill, volume track) are drawn as borders, the pan segments share the pan
+ * group's background, and there are no effects (the clear audio alert glow is drawn with border rings).
  */
 
 /* ---------------------------------------------------------------- Palettes */
@@ -557,18 +565,24 @@
     -fx-spacing: 12;
 }
 
+/* The background radius is larger than the border radius (fast fill path, see above): the 1 px border's outer edge has a
+   4.5 px radius, so the fill's corners are hidden under the opaque border */
 .group {
     -fx-background-color: -console-group-bg;
-    -fx-background-radius: 4;
+    -fx-background-radius: 4.5;
     -fx-border-color: -console-group-border;
     -fx-border-radius: 4;
 }
 
+/* The header's fill (3 px top corners) is drawn by two rectangles (see ConsoleGroupView.GroupHeader) rather than a
+   background with non-uniform corner radii (slow path, see above) */
 .group-header {
-    -fx-background-color: -console-group-header-bg;
-    -fx-background-radius: 3 3 0 0;
     -fx-padding: 4 8 4 4;
     -fx-spacing: 2;
+}
+
+.group-header-fill {
+    -fx-fill: -console-group-header-bg;
 }
 
 .group.drop-target {
@@ -786,13 +800,15 @@
 
 /* ---------------------------------------------------------------- Cards */
 
-/* Fill and border are applied inline for the card's state (see ConsoleCardView) */
+/* Fill and border are applied inline for the card's state (see ConsoleCardView).  The background radius is larger than
+   the border radius (fast fill path, see above): the 2 px border covers the band between its outer edge (4 px radius)
+   and its inner edge (2 px radius), which contains the fill's 5 px corners, so the corners look the same. */
 .card {
     -fx-padding: 8 10 8 10;
     -fx-spacing: 4;
     -fx-border-width: 2;
     -fx-border-radius: 3;
-    -fx-background-radius: 3;
+    -fx-background-radius: 5;
     -fx-background-color: #F5F7FA;
     -fx-border-color: #AEB7C2;
 }
@@ -814,20 +830,24 @@
     -fx-font-size: 12px;
 }
 
+/* Status pill with 2 px rounded corners, drawn as a 1 px rounded border (outer radius 2) around a square fill (fast
+   paths, see above); the padding is 1 px less on each side to keep the size */
 .console-root .card .label.status-pill {
     -fx-font-size: 11px;
     -fx-font-weight: bold;
-    -fx-padding: 1 6 1 6;
-    -fx-background-radius: 2;
+    -fx-padding: 0 5 0 5;
     -fx-background-color: -card-pill-bg;
+    -fx-background-insets: 1;
+    -fx-background-radius: 0;
+    -fx-border-color: -card-pill-bg;
+    -fx-border-width: 1;
+    -fx-border-radius: 1.5;
     -fx-text-fill: -card-pill-text;
 }
 
-/* Clear audio (encryption slip) alert: red pill and a red border (colour applied inline) with a red glow, which does
-   not change the card size */
-.console-root .card.clear-alert {
-    -fx-effect: dropshadow(gaussian, rgba(217, 45, 32, 0.75), 10, 0.5, 0, 0);
-}
+/* Clear audio (encryption slip) alert: red pill and a red border with a red glow, which does not change the card size.
+   The glow is drawn as translucent border rings outside the card (applied inline with the border colour, see
+   ConsoleCardView), not as a shadow effect, which would be rendered offscreen on every frame. */
 
 .lock-icon {
     -fx-fill: transparent;
@@ -886,21 +906,34 @@
     -fx-stroke: -console-mute-on-icon;
 }
 
-/* Muted by the card's group (the card's own mute setting is off) */
+/* Muted by the card's group (the card's own mute setting is off): a dashed outline, drawn by a shape behind the icon
+   (see ConsoleCardView) instead of a dashed border, because JavaFX rasterizes dashed borders on every frame while
+   dashed shapes are drawn from a cached mask (shared by all cards) */
 .mute-button.group-muted {
     -fx-background-color: -console-group-muted-card-bg;
-    -fx-border-color: -console-group-muted-card-accent;
-    -fx-border-style: segments(4, 3);
+    -fx-border-color: transparent;
+}
+
+.group-muted-outline {
+    -fx-fill: transparent;
+    -fx-stroke: -console-group-muted-card-accent;
+    -fx-stroke-width: 1;
+    -fx-stroke-dash-array: 4 3;
 }
 
 .mute-button.group-muted .mute-icon {
     -fx-stroke: -console-group-muted-card-accent;
 }
 
+/* The pan group draws the control background for its three segments (inside its border, 5 px corners), so that the
+   unselected segments have no fill of their own.  The selected first or last segment is filled with a rounded fill and
+   a square fill over its inner half (rather than a fill with non-uniform corner radii; fast paths, see above). */
 .pan-group {
     -fx-border-color: -card-control-border;
     -fx-border-radius: 6;
-    -fx-background-radius: 6;
+    -fx-background-color: -card-control-bg;
+    -fx-background-insets: 1;
+    -fx-background-radius: 5;
 }
 
 .pan-button {
@@ -909,7 +942,7 @@
     -fx-min-height: 42;
     -fx-pref-height: 42;
     -fx-padding: 0;
-    -fx-background-color: -card-control-bg;
+    -fx-background-color: transparent;
     -fx-background-radius: 0;
     -fx-background-insets: 0;
     -fx-text-fill: -card-control-text;
@@ -918,17 +951,21 @@
     -fx-cursor: hand;
 }
 
-.pan-button.first {
-    -fx-background-radius: 5 0 0 5;
-}
-
-.pan-button.last {
-    -fx-background-radius: 0 5 5 0;
-}
-
 .pan-button:selected {
     -fx-background-color: -card-selected-bg;
     -fx-text-fill: -card-selected-text;
+}
+
+.pan-button.first:selected {
+    -fx-background-color: -card-selected-bg, -card-selected-bg;
+    -fx-background-insets: 0, 0 0 0 20;
+    -fx-background-radius: 5, 0;
+}
+
+.pan-button.last:selected {
+    -fx-background-color: -card-selected-bg, -card-selected-bg;
+    -fx-background-insets: 0, 0 20 0 0;
+    -fx-background-radius: 5, 0;
 }
 
 .pan-button:focused {
@@ -937,16 +974,29 @@
     -fx-border-width: 2;
 }
 
+/* The track with round ends is drawn as a 3.5 px border with an outer radius of 3 that fills the track (fast path,
+   see above; a single stroke also keeps the translucent dark palette track colour even).  Like the theme's track
+   fill, the track extends 1 px below its 6 px bounds (7 px tall).  The slider extends the track at both ends by its
+   background radius, so the track keeps a 3 px radius background that is not drawn (its insets leave no area to
+   fill). */
 .volume-slider .track {
-    -fx-background-color: -card-track;
+    -fx-background-color: transparent;
     -fx-background-radius: 3;
+    -fx-background-insets: 3;
+    -fx-border-color: -card-track;
+    -fx-border-insets: 0 0 -1 0;
+    -fx-border-width: 3.5;
+    -fx-border-radius: 1.25;
+    -fx-padding: 0;
     -fx-pref-height: 6;
 }
 
+/* No drop shadow (the theme's slider thumb has one, which is rendered offscreen on every frame) */
 .volume-slider .thumb {
     -fx-background-color: -card-thumb;
     -fx-background-radius: 8;
     -fx-padding: 8;
+    -fx-effect: null;
 }
 
 .console-root .card .label.volume-value {

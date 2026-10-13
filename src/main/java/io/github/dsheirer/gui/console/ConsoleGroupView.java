@@ -45,6 +45,7 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
+import javafx.scene.shape.Rectangle;
 import javafx.scene.shape.SVGPath;
 
 /**
@@ -164,8 +165,7 @@ public class ConsoleGroupView extends VBox implements ConsoleColumnPane.Spanned
 
         HBox headerRow = new HBox(8, mCollapseButton, mNameLabel, mActiveLabel, mMuteButton, mEditButtons);
         headerRow.setAlignment(Pos.CENTER_LEFT);
-        VBox header = new VBox(headerRow);
-        header.getStyleClass().add("group-header");
+        GroupHeader header = new GroupHeader(headerRow);
         header.setOnContextMenuRequested(event -> {
             createHeaderMenu().show(header, event.getScreenX(), event.getScreenY());
             event.consume();
@@ -663,6 +663,51 @@ public class ConsoleGroupView extends VBox implements ConsoleColumnPane.Spanned
 
             event.consume();
         });
+    }
+
+    /**
+     * Group header panel.  Its fill (rounded top corners inside the group's border, square bottom corners) is drawn by
+     * two rectangles behind the header content instead of a region background: JavaFX draws region backgrounds with
+     * non-uniform corner radii with a path rasterizer on every frame (e.g. while the groups are scrolled), whereas a
+     * rounded rectangle shape and a plain rectangle use the fast fill paths.  The colour is set by the stylesheet
+     * ('group-header-fill').
+     */
+    private static class GroupHeader extends VBox
+    {
+        private static final double CORNER_RADIUS = 3;
+        private final Rectangle mRoundedFill = new Rectangle();
+        private final Rectangle mSquareFill = new Rectangle();
+
+        private GroupHeader(HBox headerRow)
+        {
+            super(headerRow);
+            getStyleClass().add("group-header");
+            mRoundedFill.setArcWidth(2 * CORNER_RADIUS);
+            mRoundedFill.setArcHeight(2 * CORNER_RADIUS);
+
+            for(Rectangle fill: List.of(mRoundedFill, mSquareFill))
+            {
+                fill.getStyleClass().add("group-header-fill");
+                fill.setManaged(false);
+                fill.setMouseTransparent(true);
+            }
+
+            //Behind the header content
+            getChildren().addAll(0, List.of(mRoundedFill, mSquareFill));
+        }
+
+        @Override
+        protected void layoutChildren()
+        {
+            super.layoutChildren();
+            double width = getWidth();
+            double height = getHeight();
+            mRoundedFill.setWidth(width);
+            mRoundedFill.setHeight(height);
+            mSquareFill.setY(CORNER_RADIUS);
+            mSquareFill.setWidth(width);
+            mSquareFill.setHeight(Math.max(0, height - CORNER_RADIUS));
+        }
     }
 
     /**
