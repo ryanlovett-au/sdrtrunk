@@ -25,6 +25,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Parses a RadioReference.com talkgroup table that was copied from a web browser (tab separated values), e.g.
@@ -53,6 +54,10 @@ import java.util.Map;
  */
 public class RadioReferenceTable
 {
+    /**
+     * Trailing 'Copy' button label that is included when a category heading is copied from a RadioReference page.
+     */
+    private static final Pattern COPY_BUTTON_LABEL = Pattern.compile("\\s+Copy\\s*$");
     private final List<Row> mRows;
     private final List<Integer> mIgnoredLines;
     private final boolean mHeaderFound;
@@ -190,7 +195,8 @@ public class RadioReferenceTable
             }
             else if(nonEmpty == 1)
             {
-                category = firstNonEmpty;
+                //Category headings copied from RadioReference include the label of the table's 'Copy' button
+                category = COPY_BUTTON_LABEL.matcher(firstNonEmpty).replaceFirst("").strip();
             }
             else
             {

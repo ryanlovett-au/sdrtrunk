@@ -56,7 +56,7 @@ public class RadioReferenceImportTest
         753\t2f1\tD\t19 Resource Pro\t19 Resource Protection\tPublic Works
         1001\t3e9\tE\tPD Tac\tPolice Tactical\tLaw Tac
         1002\t3ea\tTE\tPD Tac 2\t\tLaw Tac
-        1003\t3eb\tDE\tPD Disp\tPolice Dispatch\tLaw Dispatch
+        1003\t3eb\tDe\tPD Disp\tPolice Dispatch\tLaw Dispatch
         2585\ta19\tD\tUnknown\tUnknown\t
         """;
 
@@ -187,7 +187,7 @@ public class RadioReferenceImportTest
             .setConsoleMode(RadioReferenceImport.ConsoleMode.GROUP_PER_TAG));
         mModel.applyRadioReferenceImport(plan);
 
-        //E and TE: always alert; DE (partially encrypted) and D: console learns (auto)
+        //E and TE (full time encryption): always alert; De (part time encryption) and D: console learns (auto)
         assertSame(ClearAudioAlert.ALWAYS, mConsoleLayoutManager.getCardForAlias(aliasFor(1001).getUuid())
             .getClearAudioAlert());
         assertSame(ClearAudioAlert.ALWAYS, mConsoleLayoutManager.getCardForAlias(aliasFor(1002).getUuid())

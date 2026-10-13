@@ -93,7 +93,7 @@ public class RadioReferenceTableTest
             Police
             DEC\tHEX\tMode\tAlpha Tag\tDescription\tTag
             1001\t3e9\tE\tPD Tac\tPolice Tactical\tLaw Tac
-            1002\t3ea\tDE\tPD Disp\tPolice Dispatch\tLaw Dispatch
+            1002\t3ea\tDe\tPD Disp\tPolice Dispatch\tLaw Dispatch
             """;
         RadioReferenceTable table = RadioReferenceTable.parse(text);
         assertTrue(table.isRecognised());
@@ -185,15 +185,28 @@ public class RadioReferenceTableTest
     {
         assertSame(RadioReferenceMode.ANALOG, RadioReferenceMode.parse("A"));
         assertSame(RadioReferenceMode.DIGITAL, RadioReferenceMode.parse(" d "));
-        assertSame(RadioReferenceMode.DIGITAL_ENCRYPTED, RadioReferenceMode.parse("E"));
-        assertSame(RadioReferenceMode.DIGITAL_PARTIALLY_ENCRYPTED, RadioReferenceMode.parse("DE"));
-        assertSame(RadioReferenceMode.DIGITAL_PARTIALLY_ENCRYPTED, RadioReferenceMode.parse("De"));
         assertSame(RadioReferenceMode.TDMA, RadioReferenceMode.parse("T"));
-        assertSame(RadioReferenceMode.TDMA_ENCRYPTED, RadioReferenceMode.parse("TE"));
-        assertSame(RadioReferenceMode.TDMA_PARTIALLY_ENCRYPTED, RadioReferenceMode.parse("TDE"));
-        assertSame(RadioReferenceMode.TDMA_PARTIALLY_ENCRYPTED, RadioReferenceMode.parse("Te"));
         assertSame(RadioReferenceMode.MIXED, RadioReferenceMode.parse("M"));
+
+        //Uppercase E: full time encryption, lowercase e: part time encryption
+        assertSame(RadioReferenceMode.DIGITAL_ENCRYPTED, RadioReferenceMode.parse("DE"));
+        assertSame(RadioReferenceMode.DIGITAL_PARTIALLY_ENCRYPTED, RadioReferenceMode.parse("De"));
+        assertSame(RadioReferenceMode.TDMA_ENCRYPTED, RadioReferenceMode.parse("TE"));
+        assertSame(RadioReferenceMode.TDMA_PARTIALLY_ENCRYPTED, RadioReferenceMode.parse("Te"));
+
+        //Current RadioReference site format with a separate ENC token
+        assertSame(RadioReferenceMode.DIGITAL_ENCRYPTED, RadioReferenceMode.parse("D ENC"));
+        assertSame(RadioReferenceMode.DIGITAL_PARTIALLY_ENCRYPTED, RadioReferenceMode.parse("D enc"));
+        assertSame(RadioReferenceMode.TDMA_ENCRYPTED, RadioReferenceMode.parse("T\u00A0ENC"));
+
+        //Legacy forms
+        assertSame(RadioReferenceMode.DIGITAL_ENCRYPTED, RadioReferenceMode.parse("E"));
+        assertSame(RadioReferenceMode.TDMA_ENCRYPTED, RadioReferenceMode.parse("TDE"));
+        assertSame(RadioReferenceMode.TDMA_PARTIALLY_ENCRYPTED, RadioReferenceMode.parse("TDe"));
+
         assertNull(RadioReferenceMode.parse("X"));
+        assertNull(RadioReferenceMode.parse("A ENC"));
+        assertNull(RadioReferenceMode.parse("D FOO"));
         assertNull(RadioReferenceMode.parse(""));
         assertNull(RadioReferenceMode.parse(null));
 
@@ -203,6 +216,30 @@ public class RadioReferenceTableTest
         assertTrue(RadioReferenceMode.TDMA_PARTIALLY_ENCRYPTED.isPartiallyEncrypted());
         assertFalse(RadioReferenceMode.DIGITAL.isEncrypted());
         assertTrue(RadioReferenceMode.TDMA.isTdma());
+    }
+
+    @Test
+    void parsesCurrentSiteFormatWithoutHeader()
+    {
+        RadioReferenceTable table = RadioReferenceTable.parse("""
+            South Australian Ambulance Service (SAAS)  Copy \s
+            3028\tbd4\tD ENC\tD99 ADMIN 5\tD99 ADMIN 5\tEMS-Tac
+            3022\tbce\tD ENC\tD81 NW TASK 1 (4\tD81 NW TASK 1 (48352)\tEMS-Tac
+            2222\t8ae\tD ENC\tD01 METRO 1\tD01 METRO 1\tEMS Dispatch
+            159\t09f\tD ENC\tD193 ST JOHN\tD193 ST JOHN\tEMS-Tac
+            """);
+
+        assertTrue(table.isRecognised());
+        assertEquals(4, table.getRows().size());
+        assertTrue(table.getIgnoredLines().isEmpty());
+
+        RadioReferenceTable.Row row = table.getRows().get(1);
+        assertEquals(3022, row.talkgroup());
+        assertSame(RadioReferenceMode.DIGITAL_ENCRYPTED, row.mode());
+        assertEquals("D81 NW TASK 1 (48352)", row.description());
+        assertEquals("EMS-Tac", row.tag());
+        assertEquals("South Australian Ambulance Service (SAAS)", row.category());
+        assertEquals(159, table.getRows().get(3).talkgroup());
     }
 
     @Test

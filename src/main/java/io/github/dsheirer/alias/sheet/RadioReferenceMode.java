@@ -33,11 +33,11 @@ public enum RadioReferenceMode
 {
     ANALOG("A", "Analog"),
     DIGITAL("D", "Digital"),
-    DIGITAL_ENCRYPTED("E", "Digital, encrypted"),
-    DIGITAL_PARTIALLY_ENCRYPTED("DE", "Digital, partially encrypted"),
+    DIGITAL_ENCRYPTED("DE", "Digital, encrypted"),
+    DIGITAL_PARTIALLY_ENCRYPTED("De", "Digital, partially encrypted"),
     TDMA("T", "TDMA"),
     TDMA_ENCRYPTED("TE", "TDMA, encrypted"),
-    TDMA_PARTIALLY_ENCRYPTED("TDE", "TDMA, partially encrypted"),
+    TDMA_PARTIALLY_ENCRYPTED("Te", "TDMA, partially encrypted"),
     MIXED("M", "Analog/digital");
 
     private final String mCode;
@@ -66,7 +66,7 @@ public enum RadioReferenceMode
     }
 
     /**
-     * Indicates if the talkgroup is (fully) encrypted: E or TE.
+     * Indicates if the talkgroup is (fully, full time) encrypted: DE or TE.
      */
     public boolean isEncrypted()
     {
@@ -74,7 +74,7 @@ public enum RadioReferenceMode
     }
 
     /**
-     * Indicates if the talkgroup is partially encrypted (mixed clear and encrypted traffic): DE or TDE.
+     * Indicates if the talkgroup is partially (part time) encrypted: De or Te.
      */
     public boolean isPartiallyEncrypted()
     {
@@ -82,7 +82,7 @@ public enum RadioReferenceMode
     }
 
     /**
-     * Indicates if the talkgroup uses TDMA (e.g. P25 phase 2): T, TE or TDE.
+     * Indicates if the talkgroup uses TDMA (e.g. P25 phase 2): T, TE or Te.
      */
     public boolean isTdma()
     {
@@ -96,9 +96,12 @@ public enum RadioReferenceMode
     }
 
     /**
-     * Parses a RadioReference mode code.
-     * @param text to parse, e.g. 'D', 'TE' or ' de '
-     * @return mode or null if the text is not a recognised mode code.
+     * Parses a RadioReference mode.  RadioReference uses D (digital/FDMA), T (TDMA), A (analog) and M (mixed), with an
+     * uppercase E for full time encryption and a lowercase e for part time (partial) encryption, e.g. 'DE', 'De', 'TE'
+     * and 'Te'.  The current RadioReference site shows the encryption as a separate ENC token, e.g. 'D ENC' (or 'D enc'
+     * for part time), and older pages used a bare 'E' for an encrypted digital talkgroup.
+     * @param text to parse, e.g. 'D', 'TE', 'De' or 'D ENC'
+     * @return mode or null if the text is not a recognised mode.
      */
     public static RadioReferenceMode parse(String text)
     {
@@ -107,25 +110,62 @@ public enum RadioReferenceMode
             return null;
         }
 
-        String code = text.replace(' ', ' ').strip();
+        String code = text.replace('\u00A0', ' ').strip().replaceAll("\\s+", " ");
 
-        //A lowercase trailing 'e' is used for partial encryption on some RadioReference pages
-        if(code.equals("De"))
+        if(code.isEmpty())
         {
-            return DIGITAL_PARTIALLY_ENCRYPTED;
-        }
-        else if(code.equals("Te") || code.equals("TDe"))
-        {
-            return TDMA_PARTIALLY_ENCRYPTED;
+            return null;
         }
 
-        code = code.toUpperCase(Locale.ROOT);
+        //Separate encryption token: 'D ENC' (full time) or 'D enc' (part time)
+        String[] parts = code.split(" ");
 
-        for(RadioReferenceMode mode: values())
+        if(parts.length == 2 && parts[1].equalsIgnoreCase("ENC"))
         {
-            if(mode.mCode.equals(code))
+            boolean full = parts[1].equals("ENC");
+            code = parts[0].toUpperCase(Locale.ROOT) + (full ? "E" : "e");
+        }
+        else if(parts.length != 1)
+        {
+            return null;
+        }
+
+        //Legacy bare 'E': encrypted digital
+        if(code.equalsIgnoreCase("E"))
+        {
+            return DIGITAL_ENCRYPTED;
+        }
+
+        //Legacy 'TDE' / 'TDe': TDMA, full time / part time encryption
+        if(code.equalsIgnoreCase("TDE"))
+        {
+            code = "T" + code.charAt(2);
+        }
+
+        String base = code.substring(0, 1).toUpperCase(Locale.ROOT);
+        String encryption = code.substring(1);
+
+        if(encryption.isEmpty())
+        {
+            return switch(base)
             {
-                return mode;
+                case "A" -> ANALOG;
+                case "D" -> DIGITAL;
+                case "T" -> TDMA;
+                case "M" -> MIXED;
+                default -> null;
+            };
+        }
+
+        if(encryption.length() == 1 && (base.equals("D") || base.equals("T")))
+        {
+            boolean full = encryption.equals("E");
+            boolean partial = encryption.equals("e");
+
+            if(full || partial)
+            {
+                return base.equals("D") ? (full ? DIGITAL_ENCRYPTED : DIGITAL_PARTIALLY_ENCRYPTED) :
+                    (full ? TDMA_ENCRYPTED : TDMA_PARTIALLY_ENCRYPTED);
             }
         }
 
