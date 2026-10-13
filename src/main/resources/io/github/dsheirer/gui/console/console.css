@@ -66,6 +66,17 @@
     -fx-text-fill: #FFFFFF;
 }
 
+/* The settings menu popup inherits the header button's white text - restore dark text on the light popup */
+.header-menu-button .context-menu .menu-item .label,
+.header-menu-button .context-menu .menu-item .check-box,
+.header-menu-button .context-menu .menu-item .radio {
+    -fx-text-fill: #10233A;
+}
+
+.header-menu-button .context-menu .menu-item:focused .label {
+    -fx-text-fill: #FFFFFF;
+}
+
 .header-menu-button > .arrow-button > .arrow {
     -fx-background-color: #FFFFFF;
 }

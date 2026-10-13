@@ -140,6 +140,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     private Label mHintText;
     private Button mHintAddGroupButton;
     private Button mHintFollowAllButton;
+    private Button mHintConsoleModeButton;
     private ConsoleColumnPane mGroupsPane;
     private ActivityLogView mActivityLogView;
 
@@ -414,7 +415,10 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         mHintFollowAllButton = new Button("Follow all talkgroups");
         mHintFollowAllButton.getStyleClass().add("hint-button");
         mHintFollowAllButton.setOnAction(event -> mLayoutManager.setTalkgroupFilterEnabled(false));
-        HBox hintButtons = new HBox(8, mHintAddGroupButton, mHintFollowAllButton);
+        mHintConsoleModeButton = new Button("Turn on Console mode");
+        mHintConsoleModeButton.getStyleClass().add("hint-button");
+        mHintConsoleModeButton.setOnAction(event -> mLayoutManager.setConsoleModeEnabled(true));
+        HBox hintButtons = new HBox(8, mHintAddGroupButton, mHintFollowAllButton, mHintConsoleModeButton);
         hintButtons.setAlignment(Pos.CENTER_LEFT);
         mHintBanner = new VBox(6, mHintTitle, mHintText, hintButtons);
         mHintBanner.getStyleClass().add("hint-banner");
@@ -594,10 +598,27 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         boolean noCards = mLayout.getCardCount() == 0;
         boolean noGroups = mLayout.getGroups().isEmpty();
         boolean ignoringAll = noCards && mConsoleCardResolver.isFilterActive();
+        boolean consoleModeOff = !noCards && !mLayoutManager.isConsoleModeEnabled();
 
-        mHintBanner.setVisible(noCards);
-        mHintBanner.setManaged(noCards);
+        mHintBanner.setVisible(noCards || consoleModeOff);
+        mHintBanner.setManaged(noCards || consoleModeOff);
         mHintBanner.getStyleClass().remove("warning");
+        mHintConsoleModeButton.setVisible(consoleModeOff);
+        mHintConsoleModeButton.setManaged(consoleModeOff);
+
+        if(consoleModeOff)
+        {
+            mHintTitle.setText("Console mode is off");
+            mHintText.setText("Audio is played by the traditional audio playback: every talkgroup is heard and the " +
+                "cards' volume, mute and speaker settings are not applied" +
+                (mLayoutManager.isTalkgroupFilterEnabled() ? ", and talkgroups that are not on the console are " +
+                    "still followed." : "."));
+            mHintAddGroupButton.setVisible(false);
+            mHintAddGroupButton.setManaged(false);
+            mHintFollowAllButton.setVisible(false);
+            mHintFollowAllButton.setManaged(false);
+            return;
+        }
 
         if(!noCards)
         {

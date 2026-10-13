@@ -55,6 +55,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import javafx.application.Platform;
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.ListChangeListener;
 import javafx.collections.transformation.FilteredList;
@@ -144,6 +145,8 @@ public class AliasSheetEditor extends BorderPane
     private TableView<Alias> mTableView;
     private FilteredList<Alias> mFilteredList;
     private SortedList<Alias> mSortedList;
+    private final Map<Alias,Long> mRowSequence = new IdentityHashMap<>();
+    private long mNextRowSequence;
     private ComboBox<String> mAliasListComboBox;
     private TextField mSearchField;
     private Button mUndoButton;
@@ -486,8 +489,35 @@ public class AliasSheetEditor extends BorderPane
                 mTableView.getColumns().add(createColumn(column));
             }
 
+            //Rows that compare equal under the user's column sort keep the order they were added to the alias model
+            //(SortedList is not stable for rows inserted while sorted, e.g. pasted rows that share an alias list)
+            for(Alias alias: getAliasModel().aliasList())
+            {
+                mRowSequence.put(alias, mNextRowSequence++);
+            }
+
+            getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change -> {
+                while(change.next())
+                {
+                    for(Alias removed: change.getRemoved())
+                    {
+                        mRowSequence.remove(removed);
+                    }
+
+                    for(Alias added: change.getAddedSubList())
+                    {
+                        mRowSequence.put(added, mNextRowSequence++);
+                    }
+                }
+            });
+
             mSortedList = new SortedList<>(getFilteredList());
-            mSortedList.comparatorProperty().bind(mTableView.comparatorProperty());
+            mSortedList.comparatorProperty().bind(Bindings.createObjectBinding(() -> {
+                Comparator<Alias> comparator = mTableView.getComparator();
+                Comparator<Alias> insertionOrder = Comparator.comparingLong(alias ->
+                    mRowSequence.getOrDefault(alias, Long.MAX_VALUE));
+                return comparator != null ? comparator.thenComparing(insertionOrder) : null;
+            }, mTableView.comparatorProperty()));
             mTableView.setItems(mSortedList);
 
             mTableView.addEventFilter(KeyEvent.KEY_PRESSED, this::handleKeyPressed);
