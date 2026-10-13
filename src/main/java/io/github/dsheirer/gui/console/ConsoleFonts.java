@@ -18,18 +18,47 @@
  */
 package io.github.dsheirer.gui.console;
 
+import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import javafx.scene.Node;
 import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Font selection for the console window.  Uses a condensed system font for card and group names and a clear
  * monospace system font for identifiers when they are installed, otherwise the default fonts.  No fonts are bundled.
+ * The console menus use the JavaFX font family that matches the Swing menu font (see getMatchingFamily()).
  */
 public final class ConsoleFonts
 {
+    private final static Logger mLog = LoggerFactory.getLogger(ConsoleFonts.class);
+
+    /**
+     * JavaFX family of the platform's system user interface font (San Francisco on macOS).
+     */
+    public static final String SYSTEM_FAMILY = "System";
+
+    /**
+     * macOS system font files for font families that JavaFX resolves to a light face (e.g. 'Helvetica Neue', the
+     * FlatLaf font on macOS, resolves to Helvetica Neue Thin).  The first font in each collection is the regular face.
+     */
+    private static final Map<String,String> MACOS_REGULAR_FONT_FILES = Map.of(
+        "Helvetica Neue", "/System/Library/Fonts/HelveticaNeue.ttc",
+        "Helvetica", "/System/Library/Fonts/Helvetica.ttc");
+
+    /**
+     * Face styles that are not a regular weight face.
+     */
+    private static final List<String> NON_REGULAR_STYLES = List.of("thin", "light", "hairline", "black", "heavy",
+        "bold", "italic", "oblique", "condensed", "compressed");
+
     /**
      * Condensed font families in order of preference (cross-platform).
      */
@@ -44,6 +73,7 @@ public final class ConsoleFonts
     private static final List<String> MONOSPACE_FAMILIES = List.of("IBM Plex Mono", "SF Mono", "Menlo", "Consolas",
         "Cascadia Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono", "Noto Sans Mono");
 
+    private static final Map<String,String> sMatchingFamilies = new HashMap<>();
     private static String sCondensedFamily;
     private static String sMonospaceFamily;
     private static boolean sResolved;
@@ -92,6 +122,85 @@ public final class ConsoleFonts
         }
 
         return null;
+    }
+
+    /**
+     * JavaFX font family that renders the same font face as a Swing (AWT) font family, so that JavaFX text matches
+     * Swing text (e.g. the console menus and the main window's FlatLaf menus).  Invoke on the JavaFX application
+     * thread.
+     *
+     * macOS system user interface font names ('.AppleSystemUIFont', '.SF NS Text', 'System Font') map to the JavaFX
+     * 'System' family, which is the macOS system font.  Installed families are used as is when JavaFX resolves the
+     * family to a regular weight face.  On macOS, JavaFX resolves some families to a light face (e.g. 'Helvetica Neue',
+     * FlatLaf's macOS font, resolves to Helvetica Neue Thin): the regular face is then loaded from the macOS system font
+     * file, after which the family resolves to the regular face (in all JavaFX windows), or the 'System' family is used
+     * when the regular face is not available.
+     *
+     * @param awtFamily Swing font family
+     * @return JavaFX font family, or null to use the default JavaFX font (family not installed).
+     */
+    public static synchronized String getMatchingFamily(String awtFamily)
+    {
+        if(awtFamily == null || awtFamily.isBlank())
+        {
+            return null;
+        }
+
+        return sMatchingFamilies.computeIfAbsent(awtFamily, ConsoleFonts::resolveMatchingFamily);
+    }
+
+    /**
+     * Resolves the JavaFX font family for a Swing font family (see getMatchingFamily()).
+     */
+    private static String resolveMatchingFamily(String awtFamily)
+    {
+        if(awtFamily.startsWith(".") || awtFamily.equalsIgnoreCase("System Font"))
+        {
+            return SYSTEM_FAMILY;
+        }
+
+        if(!Font.getFamilies().contains(awtFamily))
+        {
+            return null;
+        }
+
+        if(isRegularFace(awtFamily))
+        {
+            return awtFamily;
+        }
+
+        String fontFile = MACOS_REGULAR_FONT_FILES.get(awtFamily);
+
+        if(fontFile != null && new File(fontFile).isFile())
+        {
+            try
+            {
+                Font.loadFont(new File(fontFile).toURI().toString(), 13);
+            }
+            catch(Exception e)
+            {
+                mLog.warn("Unable to load the regular face of font family [" + awtFamily + "] from " + fontFile, e);
+            }
+
+            if(isRegularFace(awtFamily))
+            {
+                return awtFamily;
+            }
+        }
+
+        mLog.info("JavaFX resolves font family [" + awtFamily + "] to " + Font.font(awtFamily, 13).getName() +
+            " - using the system font for the console menus");
+        return SYSTEM_FAMILY;
+    }
+
+    /**
+     * Indicates if JavaFX resolves the font family (at normal weight) to a regular weight, upright face.
+     */
+    private static boolean isRegularFace(String family)
+    {
+        Font font = Font.font(family, FontWeight.NORMAL, 13);
+        String style = font.getStyle() != null ? font.getStyle().toLowerCase(Locale.ROOT) : "";
+        return font.getFamily().equalsIgnoreCase(family) && NON_REGULAR_STYLES.stream().noneMatch(style::contains);
     }
 
     /**

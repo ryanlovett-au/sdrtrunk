@@ -26,7 +26,8 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Locale;
 import java.util.function.Function;
-import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
+import javax.swing.JLabel;
 import javax.swing.UIManager;
 
 /**
@@ -37,6 +38,12 @@ import javax.swing.UIManager;
  * theme's look and feel is installed) and converted to a stylesheet that is added to the console window's scene.  All
  * rules are scoped to the console menu bar ('.console-menu-bar') and its menu popups, which inherit the menu bar's
  * style classes.  Menu item icons are font glyph nodes with the 'menu-icon' style class, coloured like the item text.
+ *
+ * Font and metrics: the menu text uses the Swing menu font's family (mapped to the JavaFX family that renders the same
+ * face, see ConsoleFonts.getMatchingFamily(), e.g. FlatLaf's macOS font Helvetica Neue) and size.  FlatLaf fonts are
+ * already scaled by the user interface scale, and Swing font sizes (points in Java2D's 72 dpi user space) equal JavaFX
+ * pixel sizes, so the font size is used as is.  Menu bar items and menu items have the Swing row heights: the Swing
+ * font height plus the FlatLaf item margins (MenuBar.itemMargins, MenuItem.margin), scaled.
  *
  * @param barBackground menu bar background (MenuBar.background)
  * @param barForeground menu bar text (MenuBar.foreground)
@@ -58,15 +65,16 @@ import javax.swing.UIManager;
  * @param shadowOpacity popup drop shadow opacity (Popup.dropShadowOpacity), 0 for none
  * @param cornerRadius popup corner radius in pixels (PopupMenu.borderCornerRadius)
  * @param fontFamily menu font family (MenuItem.font), or null for the default font
- * @param fontSize menu font size in pixels, scaled by the user interface scale
- * @param scale user interface scale factor applied to the metrics (padding, radius)
+ * @param fontSize menu font size in pixels (MenuItem.font size, which FlatLaf scales by the user interface scale)
+ * @param fontHeight Swing line height of the menu font in pixels (ascent, descent and leading)
+ * @param scale user interface scale factor applied to the metrics (padding, radius, item margins)
  */
 public record ConsoleMenuTheme(int barBackground, int barForeground, int barBorder, int barHoverBackground,
                                int barSelectionForeground, int popupBackground, int popupBorder, int itemForeground,
                                int selectionBackground, int selectionForeground, int acceleratorForeground,
                                int acceleratorSelectionForeground, int disabledForeground, int separator,
                                int checkmark, int arrow, double shadowOpacity, int cornerRadius, String fontFamily,
-                               double fontSize, double scale)
+                               double fontSize, double fontHeight, double scale)
 {
     /**
      * Glyph size of the menu item icons, as used by the Swing menus (ThemedFontIcon size 12).
@@ -76,6 +84,11 @@ public record ConsoleMenuTheme(int barBackground, int barForeground, int barBord
      * Style class of the menu item icon nodes.
      */
     public static final String ICON_STYLE_CLASS = "menu-icon";
+    /**
+     * Vertical margin (top and bottom) of menu items (MenuItem.margin) and menu bar items (MenuBar.itemMargins) in
+     * FlatLaf, unscaled.
+     */
+    private static final int ITEM_VERTICAL_MARGIN = 3;
 
     /**
      * Reads the menu theme from the Swing UIManager defaults of the installed look and feel.  Invoke on the Swing
@@ -114,6 +127,10 @@ public record ConsoleMenuTheme(int barBackground, int barForeground, int barBord
         Font font = defaults.apply("MenuItem.font") instanceof Font menuFont ? menuFont :
             (defaults.apply("defaultFont") instanceof Font defaultFont ? defaultFont : null);
         double effectiveScale = scale > 0 ? scale : 1.0;
+        //FlatLaf scales its fonts by the user interface scale: only the default size needs scaling
+        double fontSize = font != null ? font.getSize2D() : 13.0 * effectiveScale;
+        double fontHeight = font != null ? new JLabel().getFontMetrics(font).getHeight() :
+            Math.ceil(fontSize * 1.3);
 
         return new ConsoleMenuTheme(
             barBackground,
@@ -135,7 +152,8 @@ public record ConsoleMenuTheme(int barBackground, int barForeground, int barBord
             number(defaults, 0.15, "Popup.dropShadowOpacity"),
             (int)number(defaults, 4, "PopupMenu.borderCornerRadius", "Popup.borderCornerRadius"),
             font != null ? font.getFamily() : null,
-            Math.round((font != null ? font.getSize2D() : 13.0) * effectiveScale * 10.0) / 10.0,
+            Math.round(fontSize * 10.0) / 10.0,
+            fontHeight,
             effectiveScale);
     }
 
@@ -190,15 +208,25 @@ public record ConsoleMenuTheme(int barBackground, int barForeground, int barBord
     }
 
     /**
+     * Row height of menu bar items and menu items in pixels: the font height plus the FlatLaf item margins.
+     */
+    public double getItemHeight()
+    {
+        return Math.round(fontHeight + 2 * ITEM_VERTICAL_MARGIN * scale);
+    }
+
+    /**
      * Creates the stylesheet for the console menu bar and its menu popups.
-     * @param fontInstalled tests if a font family is available to JavaFX
+     * @param fontFamilyMapper provides the JavaFX font family that renders the Swing font family, or null to use the
+     * default JavaFX font (see ConsoleFonts.getMatchingFamily())
      * @return stylesheet
      */
-    public String toStylesheet(Predicate<String> fontInstalled)
+    public String toStylesheet(UnaryOperator<String> fontFamilyMapper)
     {
+        String family = fontFamily != null && fontFamilyMapper != null ? fontFamilyMapper.apply(fontFamily) : null;
         String font = "-fx-font-size: " + String.format(Locale.ROOT, "%.1fpx", fontSize) + ";" +
-            (fontFamily != null && fontInstalled != null && fontInstalled.test(fontFamily) ?
-                " -fx-font-family: \"" + fontFamily + "\";" : "");
+            (family != null ? " -fx-font-family: \"" + family + "\";" : "") + " -fx-font-weight: normal;";
+        String height = String.format(Locale.ROOT, "%.1f", getItemHeight());
         String bar = ".console-menu-bar";
         String topMenu = bar + " > .container > .menu-button";
         String popup = bar + " .context-menu";
@@ -210,9 +238,9 @@ public record ConsoleMenuTheme(int barBackground, int barForeground, int barBord
             .append("; -fx-border-color: transparent transparent ").append(hex(barBorder))
             .append(" transparent; -fx-border-width: 0 0 1 0; -fx-padding: 0 ").append(px(2)).append(" 0 ")
             .append(px(2)).append("; }\n");
-        css.append(topMenu).append(" { -fx-background-color: transparent; -fx-background-radius: 0; -fx-padding: ")
-            .append(px(3)).append(" ").append(px(8)).append(" ").append(px(3)).append(" ").append(px(8))
-            .append("; }\n");
+        css.append(topMenu).append(" { -fx-background-color: transparent; -fx-background-radius: 0; -fx-padding: 0 ")
+            .append(px(8)).append(" 0 ").append(px(8)).append("; -fx-min-height: ").append(height)
+            .append("; -fx-pref-height: ").append(height).append("; }\n");
         css.append(topMenu).append(" > .label { -fx-padding: 0; ").append(font).append(" }\n");
         text(css, barForeground, topMenu + " > .label");
         css.append(topMenu).append(":hover, ").append(topMenu).append(":focused, ").append(topMenu)
@@ -233,9 +261,9 @@ public record ConsoleMenuTheme(int barBackground, int barForeground, int barBord
 
         //Items: text, accelerator, icon, check and arrow colours, and the armed (focused) item.  Label text colours
         //are also applied to the label's text node, which the dark JavaFX stylesheet styles directly ('.text').
-        css.append(item).append(" { -fx-background-color: transparent; -fx-background-insets: 0; -fx-padding: ")
-            .append(px(4)).append(" ").append(px(12)).append(" ").append(px(4)).append(" ").append(px(8))
-            .append("; }\n");
+        css.append(item).append(" { -fx-background-color: transparent; -fx-background-insets: 0; -fx-padding: 0 ")
+            .append(px(12)).append(" 0 ").append(px(8)).append("; -fx-min-height: ").append(height)
+            .append("; -fx-pref-height: ").append(height).append("; }\n");
         css.append(item).append(" .label { ").append(font).append(" }\n");
         text(css, itemForeground, item + " .label");
         css.append(item).append(" .accelerator-text { -fx-padding: 0 0 0 ").append(px(24)).append("; }\n");
@@ -292,12 +320,13 @@ public record ConsoleMenuTheme(int barBackground, int barForeground, int barBord
 
     /**
      * Creates the stylesheet as a data URI that can be added to a scene's stylesheets.
-     * @param fontInstalled tests if a font family is available to JavaFX
+     * @param fontFamilyMapper provides the JavaFX font family that renders the Swing font family, or null to use the
+     * default JavaFX font (see ConsoleFonts.getMatchingFamily())
      * @return stylesheet URI
      */
-    public String toStylesheetUri(Predicate<String> fontInstalled)
+    public String toStylesheetUri(UnaryOperator<String> fontFamilyMapper)
     {
-        return "data:text/css;base64," + Base64.getEncoder().encodeToString(toStylesheet(fontInstalled)
+        return "data:text/css;base64," + Base64.getEncoder().encodeToString(toStylesheet(fontFamilyMapper)
             .getBytes(StandardCharsets.UTF_8));
     }
 }

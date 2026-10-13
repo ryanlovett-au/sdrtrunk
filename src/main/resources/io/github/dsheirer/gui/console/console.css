@@ -1,18 +1,315 @@
 /*
  * Radio console window stylesheet (design: "Classic dense" with per-card mute and L/B/R pan controls).
  *
- * Card fill and border colours depend on the alias colour and are applied inline by ConsoleCardView.  This stylesheet
- * provides everything else.  Text on cards is always dark (#10233A / #1F2E3F) and the card fills are adjusted to keep
- * at least 4.5:1 contrast (see ConsoleCardColors).
+ * Palettes: the console follows the sdrtrunk theme with a light palette (default) and a dark palette (style class
+ * 'dark' on the console root, see ConsoleWindow).  All colours are JavaFX looked-up colours ('-console-*' on the console
+ * root, '-card-*' on each card) that are defined once per palette below, so the rules only reference tokens.  The
+ * console scene does not receive the application's dark stylesheet (sdrtrunk_dark.css): see
+ * ThemeManager.excludeFromDarkStylesheet().
+ *
+ * Card fill, border and text colours depend on the alias colour and are applied inline by ConsoleCardView (including
+ * the '-card-text' and '-card-sub' tokens), from ConsoleCardColors, which keeps at least 4.5:1 text contrast on every
+ * card fill.  Every token pair used for text keeps 4.5:1 contrast (3:1 for non-text indicators) in both palettes; see
+ * ConsoleCardColorsTest, which reads the token values from this file.
  */
 
+/* ---------------------------------------------------------------- Palettes */
+
 .console-root {
-    -fx-background-color: #CDD3DB;
+    /* Window and general text */
+    -console-bg: #CDD3DB;
+    -console-text: #10233A;
+    -console-text-secondary: #4A5868;
+    -console-focus: #FFC069;
+
+    /* Header bar, header buttons and the console mode switch */
+    -console-header-bg: #0F2440;
+    -console-header-text: #FFFFFF;
+    -console-header-button-bg: #17355C;
+    -console-header-button-border: #3A5A80;
+    -console-header-button-hover: #1E4373;
+    -console-selected-bg: #FFC069;
+    -console-selected-text: #0F2440;
+    -console-selected-hover: #FFD08F;
+    -console-switch-off: #5C6E84;
+    -console-switch-on: #1E9E6E;
+    -console-switch-thumb: #FFFFFF;
+
+    /* Control channel strip */
+    -console-strip-bg: #E4E8ED;
+    -console-strip-border: #AEB7C2;
+    -console-strip-title: #14365E;
+    -console-chip-bg: #FFFFFF;
+    -console-chip-border: #AEB7C2;
+    -console-dot-searching: #D98A1C;
+    -console-dot-locked: #1E9E6E;
+    -console-dot-stopped: #8A96A3;
+
+    /* Hint banner */
+    -console-hint-bg: #FFF4E0;
+    -console-hint-border: #D98A1C;
+    -console-warning-bg: #FDECEA;
+    -console-warning-border: #B42318;
+    -console-hint-button-bg: #14365E;
+    -console-hint-button-text: #FFFFFF;
+    -console-hint-button-hover: #1E4373;
+
+    /* Groups */
+    -console-group-bg: #E4E8ED;
+    -console-group-border: #9AA5B2;
+    -console-group-header-bg: #14365E;
+    -console-group-header-text: #FFFFFF;
+    -console-group-active: #FFC069;
+    -console-group-summary-idle: #C9D6E6;
+    -console-group-button-border: #3A5A80;
+    -console-group-mute-border: #5C7899;
+    -console-group-button-hover: #1E4373;
+    -console-group-muted-bg: #B42318;
+    -console-group-muted-border: #FFB4AB;
+    -console-group-muted-icon: #FFFFFF;
+    -console-drop-border: #FFC069;
+    -console-drop-bg: #D2DAE4;
+    -console-add-card-bg: #F5F7FA;
+    -console-add-card-border: #6B7A8C;
+    -console-add-card-text: #14365E;
+    -console-add-card-hover: #FFFFFF;
+
+    /* Card mute button: muted (card setting) and muted by the card's group */
+    -console-mute-on-bg: #B42318;
+    -console-mute-on-icon: #FFFFFF;
+    -console-group-muted-card-bg: #FDECEA;
+    -console-group-muted-card-accent: #B42318;
+
+    /* Activity log */
+    -console-log-title-bg: #14365E;
+    -console-log-title-text: #FFFFFF;
+    -console-log-mode-bg: #17355C;
+    -console-log-mode-border: #5C7899;
+    -console-log-mode-text: #FFFFFF;
+    -console-log-mode-hover: #1E4373;
+    -console-log-mode-selected-bg: #FFFFFF;
+    -console-log-mode-selected-text: #10233A;
+    -console-log-bg: #FFFFFF;
+    -console-log-border: #9AA5B2;
+    -console-log-header-bg: #E4E8ED;
+    -console-log-text: #10233A;
+    -console-log-row-border: #E4E8ED;
+    -console-log-selected: #DCE6F2;
+    -console-log-audio: #1E7A55;
+    -console-log-muted: #B42318;
+    -console-log-encrypted: #5B3FB8;
+    -console-log-clear-bg: #B42318;
+    -console-log-clear-text: #FFFFFF;
+    -console-log-off-console: #6B7785;
+    -console-log-ignored: #B54708;
+
+    -fx-background-color: -console-bg;
     -fx-font-size: 13px;
 }
 
+/* Dark palette ("Night Ops") */
+.console-root.dark {
+    -console-bg: #0B0E13;
+    -console-text: #E6EDF3;
+    -console-text-secondary: #9FB0C0;
+    -console-focus: #FFC069;
+
+    -console-header-bg: #11161D;
+    -console-header-text: #E6EDF3;
+    -console-header-button-bg: #18202A;
+    -console-header-button-border: #5C6B7E;
+    -console-header-button-hover: #222C38;
+    -console-selected-bg: #FFC069;
+    -console-selected-text: #0B0E13;
+    -console-selected-hover: #FFD08F;
+    -console-switch-off: #5C6E84;
+    -console-switch-on: #1E9E6E;
+    -console-switch-thumb: #FFFFFF;
+
+    -console-strip-bg: #11161D;
+    -console-strip-border: #222A35;
+    -console-strip-title: #C9D4DE;
+    -console-chip-bg: #161C24;
+    -console-chip-border: #283140;
+    -console-dot-searching: #FFB547;
+    -console-dot-locked: #5EE0B5;
+    -console-dot-stopped: #6B7785;
+
+    -console-hint-bg: #2A2112;
+    -console-hint-border: #FFB547;
+    -console-warning-bg: #2D1517;
+    -console-warning-border: #FF6B6B;
+    -console-hint-button-bg: #7CC8FF;
+    -console-hint-button-text: #0B0E13;
+    -console-hint-button-hover: #B5E0FF;
+
+    -console-group-bg: #11161D;
+    -console-group-border: #222A35;
+    -console-group-header-bg: #18202A;
+    -console-group-header-text: #E6EDF3;
+    -console-group-active: #FFC069;
+    -console-group-summary-idle: #9FB0C0;
+    -console-group-button-border: #5C6B7E;
+    -console-group-mute-border: #5C6B7E;
+    -console-group-button-hover: #26303D;
+    -console-group-muted-bg: #FF6B6B;
+    -console-group-muted-border: #FFB4AB;
+    -console-group-muted-icon: #0B0E13;
+    -console-drop-border: #FFC069;
+    -console-drop-bg: #1F3047;
+    -console-add-card-bg: #161C24;
+    -console-add-card-border: #6B7A8C;
+    -console-add-card-text: #7CC8FF;
+    -console-add-card-hover: #1C2430;
+
+    -console-mute-on-bg: #FF6B6B;
+    -console-mute-on-icon: #0B0E13;
+    -console-group-muted-card-bg: #2D1517;
+    -console-group-muted-card-accent: #FF6B6B;
+
+    -console-log-title-bg: #18202A;
+    -console-log-title-text: #E6EDF3;
+    -console-log-mode-bg: #11161D;
+    -console-log-mode-border: #5C6B7E;
+    -console-log-mode-text: #E6EDF3;
+    -console-log-mode-hover: #222C38;
+    -console-log-mode-selected-bg: #E6EDF3;
+    -console-log-mode-selected-text: #0B0E13;
+    -console-log-bg: #11161D;
+    -console-log-border: #222A35;
+    -console-log-header-bg: #18202A;
+    -console-log-text: #E6EDF3;
+    -console-log-row-border: #222A35;
+    -console-log-selected: #1E2A3A;
+    -console-log-audio: #5EE0B5;
+    -console-log-muted: #FF8A80;
+    -console-log-encrypted: #B794F6;
+    -console-log-clear-bg: #B42318;
+    -console-log-clear-text: #FFFFFF;
+    -console-log-off-console: #8593A3;
+    -console-log-ignored: #FFB547;
+
+    /* Scroll bars (dark palette only: the light palette uses the theme's scroll bars) */
+    -console-scroll-track: #11161D;
+    -console-scroll-thumb: #3A4656;
+    -console-scroll-thumb-hover: #5C6B7E;
+    -console-scroll-arrow: #9FB0C0;
+}
+
+/* Card tokens (light palette).  '-card-text' and '-card-sub' are set inline from ConsoleCardColors for the card's
+   state; these values are only defaults.  Live cards (active, muted, encrypted, hang) have translucent controls. */
+.console-root .card {
+    -card-text: -console-text;
+    -card-sub: -console-text-secondary;
+    -card-pill-bg: #DDE2E8;
+    -card-pill-text: #4A5868;
+    -card-control-bg: #FFFFFF;
+    -card-control-border: #9AA5B2;
+    -card-control-text: #10233A;
+    -card-selected-bg: #14365E;
+    -card-selected-text: #FFFFFF;
+    -card-focus: #14365E;
+    -card-track: #AEB7C2;
+    -card-thumb: #14365E;
+    -card-lock: #1F2E3F;
+    -card-handle: #4A5868;
+    -card-edit-bg: rgba(255, 255, 255, 0.6);
+    -card-edit-hover: #FFFFFF;
+    -card-edit-border: #9AA5B2;
+    -card-edit-text: #10233A;
+}
+
+.console-root .card.live {
+    -card-control-bg: rgba(255, 255, 255, 0.45);
+    -card-control-border: rgba(16, 35, 58, 0.35);
+    -card-handle: #1F2E3F;
+}
+
+.console-root .card.state-active,
+.console-root .card.state-encrypted {
+    -card-pill-bg: #10233A;
+    -card-pill-text: #FFFFFF;
+}
+
+.console-root .card.state-muted,
+.console-root .card.state-hang {
+    -card-pill-bg: #FFFFFF;
+    -card-pill-text: #10233A;
+}
+
+.console-root .card.state-unlinked {
+    -card-pill-bg: #5F6B78;
+    -card-pill-text: #FFFFFF;
+}
+
+.console-root .card.clear-alert {
+    -card-pill-bg: #B42318;
+    -card-pill-text: #FFFFFF;
+}
+
+/* Card tokens (dark palette).  Idle, muted, hang and unlinked cards are dark surfaces with light controls; active and
+   encrypted cards have bright fills with dark text and translucent dark controls (selected pan segment inverted). */
+.console-root.dark .card {
+    -card-pill-bg: #232B36;
+    -card-pill-text: #9FB0C0;
+    -card-control-bg: #1F2630;
+    -card-control-border: #5C6B7E;
+    -card-control-text: #E6EDF3;
+    -card-selected-bg: #E6EDF3;
+    -card-selected-text: #0B0E13;
+    -card-focus: #FFC069;
+    -card-track: #3A4656;
+    -card-thumb: #E6EDF3;
+    -card-lock: #C9D4DE;
+    -card-handle: #9FB0C0;
+    -card-edit-bg: #1F2630;
+    -card-edit-hover: #2A3340;
+    -card-edit-border: #5C6B7E;
+    -card-edit-text: #E6EDF3;
+}
+
+.console-root.dark .card.live {
+    -card-pill-bg: #E6EDF3;
+    -card-pill-text: #0B0E13;
+    -card-control-border: #AEBBC8;
+    -card-edit-border: #AEBBC8;
+    -card-handle: #C9D4DE;
+}
+
+.console-root.dark .card.state-active,
+.console-root.dark .card.state-encrypted {
+    -card-pill-bg: #0B0E13;
+    -card-pill-text: #E6EDF3;
+    -card-control-bg: rgba(0, 0, 0, 0.12);
+    -card-control-border: rgba(0, 0, 0, 0.55);
+    -card-control-text: #0B0E13;
+    -card-selected-bg: #0B0E13;
+    -card-selected-text: #E6EDF3;
+    -card-focus: #0B0E13;
+    -card-track: rgba(0, 0, 0, 0.28);
+    -card-thumb: #0B0E13;
+    -card-lock: #0B0E13;
+    -card-handle: #262B31;
+    -card-edit-bg: rgba(0, 0, 0, 0.12);
+    -card-edit-hover: rgba(0, 0, 0, 0.22);
+    -card-edit-border: rgba(0, 0, 0, 0.55);
+    -card-edit-text: #0B0E13;
+}
+
+.console-root.dark .card.state-unlinked {
+    -card-pill-bg: #9FB0C0;
+    -card-pill-text: #0B0E13;
+}
+
+.console-root.dark .card.clear-alert {
+    -card-pill-bg: #B42318;
+    -card-pill-text: #FFFFFF;
+}
+
+/* ---------------------------------------------------------------- General */
+
 .console-root .label {
-    -fx-text-fill: #10233A;
+    -fx-text-fill: -console-text;
 }
 
 .mono {
@@ -20,7 +317,28 @@
 }
 
 .console-root .label.secondary {
-    -fx-text-fill: #4A5868;
+    -fx-text-fill: -console-text-secondary;
+}
+
+/* Dark palette scroll bars (groups area and activity log) */
+.console-root.dark .scroll-bar,
+.console-root.dark .scroll-bar .increment-button,
+.console-root.dark .scroll-bar .decrement-button {
+    -fx-background-color: -console-scroll-track;
+}
+
+.console-root.dark .scroll-bar .thumb {
+    -fx-background-color: -console-scroll-thumb;
+    -fx-background-radius: 3;
+}
+
+.console-root.dark .scroll-bar .thumb:hover {
+    -fx-background-color: -console-scroll-thumb-hover;
+}
+
+.console-root.dark .scroll-bar .increment-arrow,
+.console-root.dark .scroll-bar .decrement-arrow {
+    -fx-background-color: -console-scroll-arrow;
 }
 
 /* ---------------------------------------------------------------- Menu bar */
@@ -31,14 +349,18 @@
 /* ---------------------------------------------------------------- Header */
 
 .console-header {
-    -fx-background-color: #0F2440;
+    -fx-background-color: -console-header-bg;
     -fx-padding: 8 20 8 20;
     -fx-spacing: 12;
     -fx-alignment: center-left;
 }
 
+.console-root.dark .console-header {
+    -fx-border-color: transparent transparent -console-group-border transparent;
+}
+
 .console-header .label {
-    -fx-text-fill: #FFFFFF;
+    -fx-text-fill: -console-header-text;
 }
 
 .console-title {
@@ -53,11 +375,11 @@
 }
 
 .header-button {
-    -fx-background-color: #17355C;
+    -fx-background-color: -console-header-button-bg;
     -fx-background-radius: 4;
-    -fx-border-color: #3A5A80;
+    -fx-border-color: -console-header-button-border;
     -fx-border-radius: 4;
-    -fx-text-fill: #FFFFFF;
+    -fx-text-fill: -console-header-text;
     -fx-font-size: 14px;
     -fx-font-weight: bold;
     -fx-min-height: 44;
@@ -67,20 +389,20 @@
 }
 
 .header-button:hover {
-    -fx-background-color: #1E4373;
+    -fx-background-color: -console-header-button-hover;
 }
 
 .header-button:focused {
-    -fx-border-color: #FFC069;
+    -fx-border-color: -console-focus;
 }
 
 .header-button:selected {
-    -fx-background-color: #FFC069;
-    -fx-text-fill: #0F2440;
+    -fx-background-color: -console-selected-bg;
+    -fx-text-fill: -console-selected-text;
 }
 
 .header-button:selected:hover {
-    -fx-background-color: #FFD08F;
+    -fx-background-color: -console-selected-hover;
 }
 
 /* Console mode switch: a toggle button with a track and thumb graphic */
@@ -89,12 +411,12 @@
 }
 
 .mode-switch:selected {
-    -fx-background-color: #17355C;
-    -fx-text-fill: #FFFFFF;
+    -fx-background-color: -console-header-button-bg;
+    -fx-text-fill: -console-header-text;
 }
 
 .mode-switch:selected:hover {
-    -fx-background-color: #1E4373;
+    -fx-background-color: -console-header-button-hover;
 }
 
 .switch-track {
@@ -104,14 +426,14 @@
     -fx-min-height: 22;
     -fx-pref-height: 22;
     -fx-max-height: 22;
-    -fx-background-color: #5C6E84;
+    -fx-background-color: -console-switch-off;
     -fx-background-radius: 11;
     -fx-padding: 2;
     -fx-alignment: center-left;
 }
 
 .mode-switch:selected .switch-track {
-    -fx-background-color: #1E9E6E;
+    -fx-background-color: -console-switch-on;
     -fx-alignment: center-right;
 }
 
@@ -122,15 +444,15 @@
     -fx-min-height: 18;
     -fx-pref-height: 18;
     -fx-max-height: 18;
-    -fx-background-color: #FFFFFF;
+    -fx-background-color: -console-switch-thumb;
     -fx-background-radius: 9;
 }
 
 /* ---------------------------------------------------------------- Control channel strip */
 
 .control-strip {
-    -fx-background-color: #E4E8ED;
-    -fx-border-color: transparent transparent #AEB7C2 transparent;
+    -fx-background-color: -console-strip-bg;
+    -fx-border-color: transparent transparent -console-strip-border transparent;
     -fx-padding: 8 20 8 20;
     -fx-spacing: 8;
     -fx-alignment: center-left;
@@ -139,13 +461,13 @@
 .console-root .label.control-strip-title {
     -fx-font-size: 15px;
     -fx-font-weight: bold;
-    -fx-text-fill: #14365E;
+    -fx-text-fill: -console-strip-title;
 }
 
 .cc-chip {
-    -fx-background-color: #FFFFFF;
+    -fx-background-color: -console-chip-bg;
     -fx-background-radius: 4;
-    -fx-border-color: #AEB7C2;
+    -fx-border-color: -console-chip-border;
     -fx-border-radius: 4;
     -fx-padding: 6 12 6 12;
     -fx-spacing: 10;
@@ -159,16 +481,16 @@
     -fx-min-height: 10;
     -fx-pref-height: 10;
     -fx-max-height: 10;
-    -fx-background-color: #D98A1C;
+    -fx-background-color: -console-dot-searching;
     -fx-background-radius: 5;
 }
 
 .cc-dot.locked {
-    -fx-background-color: #1E9E6E;
+    -fx-background-color: -console-dot-locked;
 }
 
 .cc-dot.stopped {
-    -fx-background-color: #8A96A3;
+    -fx-background-color: -console-dot-stopped;
 }
 
 .cc-site {
@@ -182,9 +504,9 @@
 /* ---------------------------------------------------------------- Hint banner / empty state */
 
 .hint-banner {
-    -fx-background-color: #FFF4E0;
+    -fx-background-color: -console-hint-bg;
     -fx-background-radius: 4;
-    -fx-border-color: #D98A1C;
+    -fx-border-color: -console-hint-border;
     -fx-border-radius: 4;
     -fx-padding: 12 16 12 16;
     -fx-spacing: 12;
@@ -192,8 +514,8 @@
 }
 
 .hint-banner.warning {
-    -fx-background-color: #FDECEA;
-    -fx-border-color: #B42318;
+    -fx-background-color: -console-warning-bg;
+    -fx-border-color: -console-warning-border;
 }
 
 .hint-title {
@@ -202,9 +524,9 @@
 }
 
 .hint-button {
-    -fx-background-color: #14365E;
+    -fx-background-color: -console-hint-button-bg;
     -fx-background-radius: 4;
-    -fx-text-fill: #FFFFFF;
+    -fx-text-fill: -console-hint-button-text;
     -fx-font-weight: bold;
     -fx-min-height: 36;
     -fx-padding: 0 14 0 14;
@@ -212,15 +534,15 @@
 }
 
 .hint-button:hover {
-    -fx-background-color: #1E4373;
+    -fx-background-color: -console-hint-button-hover;
 }
 
 /* ---------------------------------------------------------------- Groups */
 
 .groups-scroll,
 .groups-scroll > .viewport {
-    -fx-background-color: #CDD3DB;
-    -fx-background: #CDD3DB;
+    -fx-background-color: -console-bg;
+    -fx-background: -console-bg;
 }
 
 .groups-scroll {
@@ -234,14 +556,14 @@
 }
 
 .group {
-    -fx-background-color: #E4E8ED;
+    -fx-background-color: -console-group-bg;
     -fx-background-radius: 4;
-    -fx-border-color: #9AA5B2;
+    -fx-border-color: -console-group-border;
     -fx-border-radius: 4;
 }
 
 .group-header {
-    -fx-background-color: #14365E;
+    -fx-background-color: -console-group-header-bg;
     -fx-background-radius: 3 3 0 0;
     -fx-padding: 4 8 4 4;
     -fx-spacing: 2;
@@ -253,11 +575,11 @@
 }
 
 .group.drop-target {
-    -fx-border-color: #FFC069;
+    -fx-border-color: -console-drop-border;
 }
 
 .group-header .label {
-    -fx-text-fill: #FFFFFF;
+    -fx-text-fill: -console-group-header-text;
 }
 
 .group-header .label.group-name {
@@ -268,15 +590,15 @@
 .group-header .label.group-active {
     -fx-font-size: 12px;
     -fx-font-weight: bold;
-    -fx-text-fill: #FFC069;
+    -fx-text-fill: -console-group-active;
 }
 
 .group-edit-button {
     -fx-background-color: transparent;
     -fx-background-radius: 3;
-    -fx-border-color: #3A5A80;
+    -fx-border-color: -console-group-button-border;
     -fx-border-radius: 3;
-    -fx-text-fill: #FFFFFF;
+    -fx-text-fill: -console-group-header-text;
     -fx-font-size: 12px;
     -fx-min-width: 28;
     -fx-min-height: 28;
@@ -285,7 +607,7 @@
 }
 
 .group-edit-button:hover {
-    -fx-background-color: #1E4373;
+    -fx-background-color: -console-group-button-hover;
 }
 
 .group-edit-button:disabled {
@@ -307,22 +629,22 @@
 }
 
 .group-collapse-button:hover {
-    -fx-background-color: #1E4373;
+    -fx-background-color: -console-group-button-hover;
 }
 
 .group-collapse-button:focused {
-    -fx-border-color: #FFC069;
+    -fx-border-color: -console-focus;
 }
 
 .group-chevron-icon {
     -fx-fill: transparent;
-    -fx-stroke: #FFFFFF;
+    -fx-stroke: -console-group-header-text;
     -fx-stroke-width: 2.6;
     -fx-stroke-line-cap: round;
     -fx-stroke-line-join: round;
 }
 
-/* Group mute: same 44 px touch target and speaker icons as the card mute button, styled for the navy header */
+/* Group mute: same 44 px touch target and speaker icons as the card mute button, styled for the group header */
 .group-mute-button {
     -fx-min-width: 44;
     -fx-pref-width: 44;
@@ -333,31 +655,35 @@
     -fx-padding: 0;
     -fx-background-color: transparent;
     -fx-background-radius: 6;
-    -fx-border-color: #5C7899;
+    -fx-border-color: -console-group-mute-border;
     -fx-border-radius: 6;
     -fx-cursor: hand;
 }
 
 .group-mute-button:hover {
-    -fx-background-color: #1E4373;
+    -fx-background-color: -console-group-button-hover;
 }
 
 .group-mute-button:selected {
-    -fx-background-color: #B42318;
-    -fx-border-color: #FFB4AB;
+    -fx-background-color: -console-group-muted-bg;
+    -fx-border-color: -console-group-muted-border;
 }
 
 .group-mute-button:focused {
-    -fx-border-color: #FFC069;
+    -fx-border-color: -console-focus;
     -fx-border-width: 2;
 }
 
 .group-mute-icon {
     -fx-fill: transparent;
-    -fx-stroke: #FFFFFF;
+    -fx-stroke: -console-group-header-text;
     -fx-stroke-width: 2;
     -fx-stroke-line-cap: round;
     -fx-stroke-line-join: round;
+}
+
+.group-mute-button:selected .group-mute-icon {
+    -fx-stroke: -console-group-muted-icon;
 }
 
 /* Collapsed group activity summary row (aligned with the group name) */
@@ -381,12 +707,12 @@
 .group-header .label.group-summary-more {
     -fx-font-size: 12px;
     -fx-font-weight: bold;
-    -fx-text-fill: #FFC069;
+    -fx-text-fill: -console-group-active;
 }
 
 .group-header .label.group-summary-idle {
     -fx-font-size: 12px;
-    -fx-text-fill: #C9D6E6;
+    -fx-text-fill: -console-group-summary-idle;
 }
 
 .group-cards {
@@ -395,21 +721,21 @@
 }
 
 .group-cards.drop-target {
-    -fx-background-color: #D2DAE4;
+    -fx-background-color: -console-drop-bg;
 }
 
 .console-root .label.group-empty {
-    -fx-text-fill: #4A5868;
+    -fx-text-fill: -console-text-secondary;
     -fx-padding: 6 2 6 2;
 }
 
 .add-card-button {
-    -fx-background-color: #F5F7FA;
+    -fx-background-color: -console-add-card-bg;
     -fx-background-radius: 3;
-    -fx-border-color: #6B7A8C;
+    -fx-border-color: -console-add-card-border;
     -fx-border-style: segments(5, 4);
     -fx-border-radius: 3;
-    -fx-text-fill: #14365E;
+    -fx-text-fill: -console-add-card-text;
     -fx-font-weight: bold;
     -fx-min-height: 40;
     -fx-max-width: infinity;
@@ -417,11 +743,12 @@
 }
 
 .add-card-button:hover {
-    -fx-background-color: #FFFFFF;
+    -fx-background-color: -console-add-card-hover;
 }
 
 /* ---------------------------------------------------------------- Cards */
 
+/* Fill and border are applied inline for the card's state (see ConsoleCardView) */
 .card {
     -fx-padding: 8 10 8 10;
     -fx-spacing: 4;
@@ -432,17 +759,17 @@
     -fx-border-color: #AEB7C2;
 }
 
+.console-root .card .label {
+    -fx-text-fill: -card-text;
+}
+
 .console-root .card .label.card-name {
     -fx-font-size: 19px;
     -fx-font-weight: bold;
 }
 
 .console-root .card .label.sub {
-    -fx-text-fill: #4A5868;
-}
-
-.console-root .card.live .label.sub {
-    -fx-text-fill: #1F2E3F;
+    -fx-text-fill: -card-sub;
 }
 
 .card-tg {
@@ -454,25 +781,8 @@
     -fx-font-weight: bold;
     -fx-padding: 1 6 1 6;
     -fx-background-radius: 2;
-    -fx-background-color: #DDE2E8;
-    -fx-text-fill: #4A5868;
-}
-
-.console-root .card.state-active .label.status-pill,
-.console-root .card.state-encrypted .label.status-pill {
-    -fx-background-color: #10233A;
-    -fx-text-fill: #FFFFFF;
-}
-
-.console-root .card.state-muted .label.status-pill,
-.console-root .card.state-hang .label.status-pill {
-    -fx-background-color: #FFFFFF;
-    -fx-text-fill: #10233A;
-}
-
-.console-root .card.state-unlinked .label.status-pill {
-    -fx-background-color: #6B7A8C;
-    -fx-text-fill: #FFFFFF;
+    -fx-background-color: -card-pill-bg;
+    -fx-text-fill: -card-pill-text;
 }
 
 /* Clear audio (encryption slip) alert: red pill and a red border (colour applied inline) with a red glow, which does
@@ -481,14 +791,9 @@
     -fx-effect: dropshadow(gaussian, rgba(217, 45, 32, 0.75), 10, 0.5, 0, 0);
 }
 
-.console-root .card.clear-alert .label.status-pill {
-    -fx-background-color: #B42318;
-    -fx-text-fill: #FFFFFF;
-}
-
 .lock-icon {
     -fx-fill: transparent;
-    -fx-stroke: #1F2E3F;
+    -fx-stroke: -card-lock;
     -fx-stroke-width: 2.4;
     -fx-stroke-line-join: round;
 }
@@ -514,61 +819,50 @@
     -fx-pref-height: 44;
     -fx-max-height: 44;
     -fx-padding: 0;
-    -fx-background-color: #FFFFFF;
+    -fx-background-color: -card-control-bg;
     -fx-background-radius: 6;
-    -fx-border-color: #9AA5B2;
+    -fx-border-color: -card-control-border;
     -fx-border-radius: 6;
     -fx-cursor: hand;
 }
 
-.card.live .mute-button {
-    -fx-background-color: rgba(255, 255, 255, 0.45);
-    -fx-border-color: rgba(16, 35, 58, 0.35);
-}
-
-.mute-button:selected,
-.card.live .mute-button:selected {
-    -fx-background-color: #B42318;
-    -fx-border-color: #B42318;
+.mute-button:selected {
+    -fx-background-color: -console-mute-on-bg;
+    -fx-border-color: -console-mute-on-bg;
 }
 
 .mute-button:focused {
-    -fx-border-color: #14365E;
+    -fx-border-color: -card-focus;
     -fx-border-width: 2;
 }
 
 .mute-icon {
     -fx-fill: transparent;
-    -fx-stroke: #10233A;
+    -fx-stroke: -card-control-text;
     -fx-stroke-width: 2;
     -fx-stroke-line-cap: round;
     -fx-stroke-line-join: round;
 }
 
 .mute-button:selected .mute-icon {
-    -fx-stroke: #FFFFFF;
+    -fx-stroke: -console-mute-on-icon;
 }
 
 /* Muted by the card's group (the card's own mute setting is off) */
-.mute-button.group-muted,
-.card.live .mute-button.group-muted {
-    -fx-background-color: #FDECEA;
-    -fx-border-color: #B42318;
+.mute-button.group-muted {
+    -fx-background-color: -console-group-muted-card-bg;
+    -fx-border-color: -console-group-muted-card-accent;
     -fx-border-style: segments(4, 3);
 }
 
 .mute-button.group-muted .mute-icon {
-    -fx-stroke: #B42318;
+    -fx-stroke: -console-group-muted-card-accent;
 }
 
 .pan-group {
-    -fx-border-color: #9AA5B2;
+    -fx-border-color: -card-control-border;
     -fx-border-radius: 6;
     -fx-background-radius: 6;
-}
-
-.card.live .pan-group {
-    -fx-border-color: rgba(16, 35, 58, 0.35);
 }
 
 .pan-button {
@@ -577,10 +871,10 @@
     -fx-min-height: 42;
     -fx-pref-height: 42;
     -fx-padding: 0;
-    -fx-background-color: #FFFFFF;
+    -fx-background-color: -card-control-bg;
     -fx-background-radius: 0;
     -fx-background-insets: 0;
-    -fx-text-fill: #10233A;
+    -fx-text-fill: -card-control-text;
     -fx-font-size: 13px;
     -fx-font-weight: bold;
     -fx-cursor: hand;
@@ -594,30 +888,25 @@
     -fx-background-radius: 0 5 5 0;
 }
 
-.card.live .pan-button {
-    -fx-background-color: rgba(255, 255, 255, 0.45);
-}
-
-.pan-button:selected,
-.card.live .pan-button:selected {
-    -fx-background-color: #14365E;
-    -fx-text-fill: #FFFFFF;
+.pan-button:selected {
+    -fx-background-color: -card-selected-bg;
+    -fx-text-fill: -card-selected-text;
 }
 
 .pan-button:focused {
     -fx-background-insets: 0;
-    -fx-border-color: #FFC069;
+    -fx-border-color: -console-focus;
     -fx-border-width: 2;
 }
 
 .volume-slider .track {
-    -fx-background-color: #AEB7C2;
+    -fx-background-color: -card-track;
     -fx-background-radius: 3;
     -fx-pref-height: 6;
 }
 
 .volume-slider .thumb {
-    -fx-background-color: #14365E;
+    -fx-background-color: -card-thumb;
     -fx-background-radius: 8;
     -fx-padding: 8;
 }
@@ -631,11 +920,11 @@
 
 .card-edit-button {
     -fx-min-width: 28;
-    -fx-background-color: rgba(255, 255, 255, 0.6);
+    -fx-background-color: -card-edit-bg;
     -fx-background-radius: 3;
-    -fx-border-color: #9AA5B2;
+    -fx-border-color: -card-edit-border;
     -fx-border-radius: 3;
-    -fx-text-fill: #10233A;
+    -fx-text-fill: -card-edit-text;
     -fx-font-size: 12px;
     -fx-min-height: 28;
     -fx-padding: 0 8 0 8;
@@ -643,12 +932,12 @@
 }
 
 .card-edit-button:hover {
-    -fx-background-color: #FFFFFF;
+    -fx-background-color: -card-edit-hover;
 }
 
 .console-root .label.drag-handle {
     -fx-font-size: 16px;
-    -fx-text-fill: #4A5868;
+    -fx-text-fill: -card-handle;
     -fx-cursor: move;
     -fx-padding: 0 4 0 0;
 }
@@ -660,29 +949,29 @@
 }
 
 .activity-log > .title {
-    -fx-background-color: #14365E;
+    -fx-background-color: -console-log-title-bg;
     -fx-background-radius: 4 4 0 0;
     -fx-background-insets: 0;
     -fx-padding: 8 12 8 12;
 }
 
 .activity-log > .title > .text {
-    -fx-fill: #FFFFFF;
+    -fx-fill: -console-log-title-text;
     -fx-font-size: 15px;
     -fx-font-weight: bold;
 }
 
 .activity-log > .title > .arrow-button > .arrow {
-    -fx-background-color: #FFFFFF;
+    -fx-background-color: -console-log-title-text;
 }
 
 /* Segmented "Console only | All traffic" toggle in the activity log title bar */
 .log-mode-button {
-    -fx-background-color: #17355C;
+    -fx-background-color: -console-log-mode-bg;
     -fx-background-radius: 0;
-    -fx-border-color: #5C7899;
+    -fx-border-color: -console-log-mode-border;
     -fx-border-width: 1;
-    -fx-text-fill: #FFFFFF;
+    -fx-text-fill: -console-log-mode-text;
     -fx-font-size: 12px;
     -fx-font-weight: bold;
     -fx-padding: 3 10 3 10;
@@ -701,27 +990,27 @@
 }
 
 .log-mode-button:hover {
-    -fx-background-color: #1E4373;
+    -fx-background-color: -console-log-mode-hover;
 }
 
 .log-mode-button:selected {
-    -fx-background-color: #FFFFFF;
-    -fx-text-fill: #10233A;
+    -fx-background-color: -console-log-mode-selected-bg;
+    -fx-text-fill: -console-log-mode-selected-text;
 }
 
 .log-mode-button:focused {
-    -fx-border-color: #FFC069;
+    -fx-border-color: -console-focus;
 }
 
 .activity-log > .content {
-    -fx-background-color: #FFFFFF;
-    -fx-border-color: #9AA5B2;
+    -fx-background-color: -console-log-bg;
+    -fx-border-color: -console-log-border;
     -fx-border-width: 0 1 1 1;
     -fx-padding: 0;
 }
 
 .activity-table {
-    -fx-background-color: #FFFFFF;
+    -fx-background-color: -console-log-bg;
     -fx-font-size: 13px;
     -fx-border-width: 0;
     -fx-background-insets: 0;
@@ -730,27 +1019,33 @@
 .activity-table .column-header-background,
 .activity-table .column-header,
 .activity-table .filler {
-    -fx-background-color: #E4E8ED;
+    -fx-background-color: -console-log-header-bg;
 }
 
 .activity-table .column-header .label {
     -fx-font-weight: bold;
-    -fx-text-fill: #10233A;
+    -fx-text-fill: -console-log-text;
     -fx-alignment: center-left;
     -fx-padding: 4 12 4 12;
 }
 
 .activity-table .table-row-cell {
-    -fx-background-color: #FFFFFF;
-    -fx-border-color: #E4E8ED transparent transparent transparent;
+    -fx-background-color: -console-log-bg;
+    -fx-border-color: -console-log-row-border transparent transparent transparent;
 }
 
 .activity-table .table-row-cell:selected {
-    -fx-background-color: #DCE6F2;
+    -fx-background-color: -console-log-selected;
+}
+
+/* Dark palette: the selected row keeps the console's selection colour (instead of the theme's accent selection
+   colour), on which the coloured log text keeps its contrast */
+.console-root.dark .activity-table .table-row-cell:filled:selected {
+    -fx-background-color: -console-log-selected;
 }
 
 .activity-table .table-cell {
-    -fx-text-fill: #10233A;
+    -fx-text-fill: -console-log-text;
     -fx-padding: 4 12 4 12;
 }
 
@@ -759,29 +1054,29 @@
 }
 
 .activity-table .table-cell.status-audio {
-    -fx-text-fill: #1E7A55;
+    -fx-text-fill: -console-log-audio;
     -fx-font-weight: bold;
 }
 
 .activity-table .table-cell.status-muted {
-    -fx-text-fill: #B42318;
+    -fx-text-fill: -console-log-muted;
     -fx-font-weight: bold;
 }
 
 .activity-table .table-cell.status-encrypted {
-    -fx-text-fill: #5B3FB8;
+    -fx-text-fill: -console-log-encrypted;
     -fx-font-weight: bold;
 }
 
 .activity-table .table-cell.status-clear {
-    -fx-text-fill: #FFFFFF;
-    -fx-background-color: #B42318;
+    -fx-text-fill: -console-log-clear-text;
+    -fx-background-color: -console-log-clear-bg;
     -fx-font-weight: bold;
 }
 
 /* Calls that are not on the console (all traffic mode): de-emphasised grey text, IGNORED in amber */
 .activity-table .table-row-cell.off-console .table-cell {
-    -fx-text-fill: #6B7785;
+    -fx-text-fill: -console-log-off-console;
 }
 
 .activity-table .table-row-cell.off-console .table-cell.log-talkgroup {
@@ -790,17 +1085,28 @@
 
 .activity-table .table-row-cell.off-console .table-cell.status-not-on-console,
 .activity-table .table-row-cell.off-console .table-cell.status-encrypted {
-    -fx-text-fill: #6B7785;
+    -fx-text-fill: -console-log-off-console;
     -fx-font-weight: normal;
 }
 
 .activity-table .table-row-cell.off-console .table-cell.status-ignored {
-    -fx-text-fill: #B54708;
+    -fx-text-fill: -console-log-ignored;
     -fx-font-weight: bold;
 }
 
 /* ---------------------------------------------------------------- Alias picker dialog */
 
-.alias-picker .table-row-cell.assigned {
-    -fx-opacity: 0.5;
+/* The console's dialogs are standard dialogs that follow the application theme (including the application's dark
+   stylesheet, which colours text nodes directly).  Aliases that are already on the console are shown in a dimmer text
+   colour (with their console group in the On Console column), with at least 4.5:1 contrast in both themes. */
+.alias-picker .table-row-cell.assigned .text {
+    -fx-fill: #5F6B78;
+}
+
+.alias-picker.dark .table-row-cell.assigned .text {
+    -fx-fill: #A9B1BA;
+}
+
+.alias-picker .table-row-cell.assigned:selected .text {
+    -fx-fill: #FFFFFF;
 }

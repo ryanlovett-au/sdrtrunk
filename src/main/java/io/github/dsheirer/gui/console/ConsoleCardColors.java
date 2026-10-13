@@ -21,13 +21,24 @@ package io.github.dsheirer.gui.console;
 import io.github.dsheirer.console.activity.CardActivityState;
 
 /**
- * Console card colour calculations (fill and border for each card state), using 24-bit RGB integer colours so that
- * the calculations do not depend on the JavaFX toolkit.
+ * Console card colour calculations (fill, border and text colours for each card state) in the light or dark console
+ * palette, using 24-bit RGB integer colours so that the calculations do not depend on the JavaFX toolkit.
  *
  * The card's base colour is the alias colour, or an entry from the default palette when the alias has no colour
- * (zero or black).  Card text is always dark, so the base colour is lightened as needed so that the card's secondary
- * text keeps a contrast ratio of at least 4.5:1 (WCAG AA) on the active fill.  The border ('ink') colour is a darker
- * shade of the base colour that also keeps 4.5:1 contrast on white, so it can be used for text (e.g. activity log).
+ * (zero or black).  Active (receiving) and encrypted cards are filled with a bright colour and always have dark text,
+ * so the base colour is lightened as needed so that the card's secondary text keeps a contrast ratio of at least 4.5:1
+ * (WCAG AA) on the active fill.
+ *
+ * Light palette: all card text is dark, muted and hang cards are light tints of the base colour, and the border ('ink')
+ * colour is a darker shade of the base colour that also keeps 4.5:1 contrast on white, so it can be used for text
+ * (e.g. activity log).
+ *
+ * Dark palette: idle, muted, hang and unlinked cards are dark surfaces with light text.  Muted and hang cards mix the
+ * base colour into the idle surface (reduced as needed to keep 4.5:1 contrast with the light text) with a base colour
+ * border, and the ink colour is the base colour, lightened as needed to keep 4.5:1 contrast on the dark activity log.
+ *
+ * The other console colours (window, header, groups, controls, status pills) are JavaFX looked-up colours defined in
+ * console.css for each palette (style class 'dark' on the console root for the dark palette).
  */
 public final class ConsoleCardColors
 {
@@ -59,6 +70,132 @@ public final class ConsoleCardColors
 
     private ConsoleCardColors()
     {
+    }
+
+    /**
+     * Console colour palette, selected by the active sdrtrunk theme (light or dark).  The values that are shared with
+     * console.css (card surfaces and card text) must match the stylesheet's looked-up colours for the palette.
+     */
+    public enum Palette
+    {
+        LIGHT(false, TEXT, TEXT_SECONDARY_IDLE, TEXT, TEXT_SECONDARY_ACTIVE, TEXT, TEXT_SECONDARY_ACTIVE, IDLE_FILL,
+            IDLE_BORDER, ENCRYPTED_FILL, ENCRYPTED_BORDER, UNLINKED_FILL, UNLINKED_BORDER, MUTED_TINT, HANG_TINT,
+            WHITE),
+        DARK(true, 0xE6EDF3, 0x9FB0C0, 0x0B0E13, 0x262B31, 0xE6EDF3, 0xC9D4DE, 0x161C24, 0x283140, 0xB794F6,
+            0xB794F6, 0x1A2029, 0x5C6B7E, 0.30, 0.13, 0x1E2A3A);
+
+        /**
+         * Style class of the console root (and console dialogs) for the dark palette.
+         */
+        public static final String DARK_STYLE_CLASS = "dark";
+
+        private final boolean mDark;
+        private final int mIdleText;
+        private final int mIdleSecondaryText;
+        private final int mActiveText;
+        private final int mActiveSecondaryText;
+        private final int mTintText;
+        private final int mTintSecondaryText;
+        private final int mIdleFill;
+        private final int mIdleBorder;
+        private final int mEncryptedFill;
+        private final int mEncryptedBorder;
+        private final int mUnlinkedFill;
+        private final int mUnlinkedBorder;
+        private final double mMutedTint;
+        private final double mHangTint;
+        private final int mInkBackground;
+
+        /**
+         * Constructs an instance
+         * @param dark palette
+         * @param idleText card text on idle and unlinked cards
+         * @param idleSecondaryText secondary text on idle and unlinked cards
+         * @param activeText card text on active and encrypted cards
+         * @param activeSecondaryText secondary text on active and encrypted cards
+         * @param tintText card text on muted and hang cards
+         * @param tintSecondaryText secondary text on muted and hang cards
+         * @param idleFill idle card fill
+         * @param idleBorder idle card border
+         * @param encryptedFill encrypted card fill
+         * @param encryptedBorder encrypted card border
+         * @param unlinkedFill unlinked card fill
+         * @param unlinkedBorder unlinked card border
+         * @param mutedTint amount of the base colour in the muted card fill
+         * @param hangTint amount of the base colour in the hang card fill
+         * @param inkBackground activity log background (the lowest contrast one) for the ink colour
+         */
+        Palette(boolean dark, int idleText, int idleSecondaryText, int activeText, int activeSecondaryText,
+                int tintText, int tintSecondaryText, int idleFill, int idleBorder, int encryptedFill,
+                int encryptedBorder, int unlinkedFill, int unlinkedBorder, double mutedTint, double hangTint,
+                int inkBackground)
+        {
+            mDark = dark;
+            mIdleText = idleText;
+            mIdleSecondaryText = idleSecondaryText;
+            mActiveText = activeText;
+            mActiveSecondaryText = activeSecondaryText;
+            mTintText = tintText;
+            mTintSecondaryText = tintSecondaryText;
+            mIdleFill = idleFill;
+            mIdleBorder = idleBorder;
+            mEncryptedFill = encryptedFill;
+            mEncryptedBorder = encryptedBorder;
+            mUnlinkedFill = unlinkedFill;
+            mUnlinkedBorder = unlinkedBorder;
+            mMutedTint = mutedTint;
+            mHangTint = hangTint;
+            mInkBackground = inkBackground;
+        }
+
+        /**
+         * Palette for the theme.
+         * @param dark true when the active sdrtrunk theme is dark
+         */
+        public static Palette of(boolean dark)
+        {
+            return dark ? DARK : LIGHT;
+        }
+
+        /**
+         * Indicates if this is the dark palette.
+         */
+        public boolean isDark()
+        {
+            return mDark;
+        }
+
+        /**
+         * Card text on active and encrypted cards (the bright card fills).
+         */
+        public int getActiveText()
+        {
+            return mActiveText;
+        }
+
+        /**
+         * Secondary card text on active and encrypted cards.
+         */
+        public int getActiveSecondaryText()
+        {
+            return mActiveSecondaryText;
+        }
+
+        /**
+         * Idle card fill
+         */
+        public int getIdleFill()
+        {
+            return mIdleFill;
+        }
+
+        /**
+         * Background against which the ink colour keeps the minimum contrast (activity log rows).
+         */
+        public int getInkBackground()
+        {
+            return mInkBackground;
+        }
     }
 
     /**
@@ -136,22 +273,45 @@ public final class ConsoleCardColors
     }
 
     /**
-     * Fill and border colours for a card.
+     * Colours for a card (and for the collapsed group activity badge that features the card).
      * @param fill RGB fill colour
      * @param border RGB border colour
      * @param dashed true for a dashed border
+     * @param text RGB card text colour (name, talker)
+     * @param secondaryText RGB secondary card text colour (talkgroup, site, recent talkers, volume)
      */
-    public record CardPaint(int fill, int border, boolean dashed)
+    public record CardPaint(int fill, int border, boolean dashed, int text, int secondaryText)
     {
+        /**
+         * Colour of an indicator dot drawn on the fill (e.g. the collapsed group badge dot): the border colour, or the
+         * text colour when the border colour does not have 3:1 contrast with the fill (e.g. dark palette active
+         * cards, where the border is the fill colour).
+         */
+        public int indicator()
+        {
+            return contrastRatio(border, fill) >= 3.0 ? border : text;
+        }
+    }
+
+    /**
+     * Base (active) colour for a card in the light palette.
+     * @param aliasColor alias colour (RGB or ARGB), where zero or black means no colour
+     * @param key used to select a default palette colour when the alias has no colour (e.g. the card identifier)
+     * @return RGB base colour that keeps the minimum contrast with dark card text.
+     */
+    public static int getBaseColor(int aliasColor, String key)
+    {
+        return getBaseColor(aliasColor, key, Palette.LIGHT);
     }
 
     /**
      * Base (active) colour for a card.
      * @param aliasColor alias colour (RGB or ARGB), where zero or black means no colour
      * @param key used to select a default palette colour when the alias has no colour (e.g. the card identifier)
-     * @return RGB base colour that keeps the minimum contrast with dark card text.
+     * @param palette console palette
+     * @return RGB base colour that keeps the minimum contrast with the palette's active card text.
      */
-    public static int getBaseColor(int aliasColor, String key)
+    public static int getBaseColor(int aliasColor, String key, Palette palette)
     {
         int rgb = aliasColor & 0xFFFFFF;
 
@@ -161,11 +321,12 @@ public final class ConsoleCardColors
             rgb = DEFAULT_PALETTE[index];
         }
 
-        return ensureContrast(rgb, TEXT_SECONDARY_ACTIVE, MINIMUM_CONTRAST);
+        return ensureContrast(rgb, palette.mActiveSecondaryText, MINIMUM_CONTRAST);
     }
 
     /**
-     * Darker shade of the base colour for borders and coloured text, with at least the minimum contrast on white.
+     * Light palette ink colour: a darker shade of the base colour for borders and coloured text, with at least the
+     * minimum contrast on white.
      * @param base RGB colour
      * @return RGB ink colour
      */
@@ -184,30 +345,103 @@ public final class ConsoleCardColors
     }
 
     /**
-     * Card fill and border for the visual state.
+     * Ink colour for coloured text (activity log talkgroup) with at least the minimum contrast on the palette's
+     * activity log background: a darker shade of the base colour (light palette), or the base colour, lightened as
+     * needed (dark palette).
+     * @param base RGB colour (see getBaseColor())
+     * @param palette console palette
+     * @return RGB ink colour
+     */
+    public static int getInkColor(int base, Palette palette)
+    {
+        if(!palette.isDark())
+        {
+            return getInkColor(base);
+        }
+
+        return ensureContrast(base, palette.mInkBackground, MINIMUM_CONTRAST);
+    }
+
+    /**
+     * Light palette card fill, border and text colours for the visual state.
      * @param base RGB base colour (see getBaseColor())
      * @param state visual state
      * @return paint
      */
     public static CardPaint getPaint(int base, VisualState state)
     {
-        int ink = getInkColor(base);
+        return getPaint(base, state, Palette.LIGHT);
+    }
+
+    /**
+     * Card fill, border and text colours for the visual state.
+     * @param base RGB base colour (see getBaseColor())
+     * @param state visual state
+     * @param palette console palette
+     * @return paint
+     */
+    public static CardPaint getPaint(int base, VisualState state, Palette palette)
+    {
+        if(!palette.isDark())
+        {
+            int ink = getInkColor(base);
+            int secondary = state.isLive() ? TEXT_SECONDARY_ACTIVE : TEXT_SECONDARY_IDLE;
+
+            return switch(state)
+            {
+                case ACTIVE -> new CardPaint(base, ink, false, TEXT, secondary);
+                case MUTED -> new CardPaint(mix(base, IDLE_FILL, 1.0 - MUTED_TINT), ink, true, TEXT, secondary);
+                case ENCRYPTED -> new CardPaint(ENCRYPTED_FILL, ENCRYPTED_BORDER, false, TEXT, secondary);
+                case HANG -> new CardPaint(mix(base, IDLE_FILL, 1.0 - HANG_TINT), ink, false, TEXT, secondary);
+                case UNLINKED -> new CardPaint(UNLINKED_FILL, UNLINKED_BORDER, true, TEXT, secondary);
+                default -> new CardPaint(IDLE_FILL, IDLE_BORDER, false, TEXT, secondary);
+            };
+        }
 
         return switch(state)
         {
-            case ACTIVE -> new CardPaint(base, ink, false);
-            case MUTED -> new CardPaint(mix(base, IDLE_FILL, 1.0 - MUTED_TINT), ink, true);
-            case ENCRYPTED -> new CardPaint(ENCRYPTED_FILL, ENCRYPTED_BORDER, false);
-            case HANG -> new CardPaint(mix(base, IDLE_FILL, 1.0 - HANG_TINT), ink, false);
-            case UNLINKED -> new CardPaint(UNLINKED_FILL, UNLINKED_BORDER, true);
-            default -> new CardPaint(IDLE_FILL, IDLE_BORDER, false);
+            case ACTIVE -> new CardPaint(base, base, false, palette.mActiveText, palette.mActiveSecondaryText);
+            case MUTED -> new CardPaint(getTint(base, palette.mMutedTint, palette), base, true, palette.mTintText,
+                palette.mTintSecondaryText);
+            case ENCRYPTED -> new CardPaint(palette.mEncryptedFill, palette.mEncryptedBorder, false,
+                palette.mActiveText, palette.mActiveSecondaryText);
+            case HANG -> new CardPaint(getTint(base, palette.mHangTint, palette), base, false, palette.mTintText,
+                palette.mTintSecondaryText);
+            case UNLINKED -> new CardPaint(palette.mUnlinkedFill, palette.mUnlinkedBorder, true, palette.mIdleText,
+                palette.mIdleSecondaryText);
+            default -> new CardPaint(palette.mIdleFill, palette.mIdleBorder, false, palette.mIdleText,
+                palette.mIdleSecondaryText);
         };
     }
 
     /**
-     * Lightens the colour (mixes it with white) until it has at least the minimum contrast ratio with the text colour.
+     * Dark palette tinted fill: the base colour mixed into the idle card fill, with the amount of the base colour
+     * reduced as needed so that the light (tint) card text and secondary text keep the minimum contrast.
+     * @param base RGB colour
+     * @param tint amount of the base colour, 0.0 - 1.0
+     * @param palette (dark) console palette
+     * @return RGB fill colour
+     */
+    private static int getTint(int base, double tint, Palette palette)
+    {
+        double amount = tint;
+        int fill = mix(palette.mIdleFill, base, amount);
+
+        while(amount > 0.0 && (contrastRatio(fill, palette.mTintSecondaryText) < MINIMUM_CONTRAST ||
+            contrastRatio(fill, palette.mTintText) < MINIMUM_CONTRAST))
+        {
+            amount = Math.max(0.0, amount - 0.02);
+            fill = mix(palette.mIdleFill, base, amount);
+        }
+
+        return fill;
+    }
+
+    /**
+     * Lightens the colour (mixes it with white) until it has at least the minimum contrast ratio with the (dark) text
+     * or background colour.
      * @param rgb colour to adjust
-     * @param text RGB text colour (dark)
+     * @param text RGB dark text or background colour
      * @param minimum contrast ratio
      * @return adjusted colour
      */

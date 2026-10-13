@@ -37,7 +37,7 @@ import javafx.scene.shape.Circle;
 import javafx.scene.shape.SVGPath;
 
 /**
- * Console group panel: navy header with a collapse chevron, the group name, the active call count and a group mute
+ * Console group panel: header with a collapse chevron, the group name, the active call count and a group mute
  * button, and the group's cards in a vertical list.  In edit mode the header has move, rename and delete buttons, the
  * panel has an add talkgroup button, and cards can be dropped onto the panel (appended to the group).  In any mode,
  * aliases dragged from the alias sheet can be dropped onto the panel (header or cards) to add their cards to the group,
@@ -59,7 +59,7 @@ public class ConsoleGroupView extends VBox
     private static final String CLEAR_FILL = "#B42318";
     private static final String CLEAR_TEXT = "#FFFFFF";
     /**
-     * Light outline of the red clear alert badge, which has low contrast with the navy header on its own.
+     * Light outline of the red clear alert badge, which has low contrast with the group header on its own.
      */
     private static final String CLEAR_OUTLINE = "#FFB4AB";
 
@@ -282,7 +282,8 @@ public class ConsoleGroupView extends VBox
     /**
      * Updates the collapsed group's activity summary.  Ignored when the summary and colour have not changed.
      * @param activity summary for the group's cards
-     * @param baseColor RGB base (active) colour of the featured card (see ConsoleCardColors.getBaseColor())
+     * @param baseColor RGB base (active) colour of the featured card in the console window's palette (see
+     * ConsoleCardColors.getBaseColor())
      */
     public void setActivity(ConsoleGroupActivity activity, int baseColor)
     {
@@ -328,10 +329,11 @@ public class ConsoleGroupView extends VBox
         {
             ConsoleCardColors.VisualState state = ConsoleCardColors.VisualState.of(summary.state(), summary.muted(),
                 true);
-            ConsoleCardColors.CardPaint paint = ConsoleCardColors.getPaint(baseColor, state);
+            ConsoleCardColors.CardPaint paint = ConsoleCardColors.getPaint(baseColor, state,
+                mConsoleWindow.getPalette());
             fill = ConsoleCardColors.toHex(paint.fill());
-            text = ConsoleCardColors.toHex(ConsoleCardColors.TEXT);
-            dot = ConsoleCardColors.toHex(paint.border());
+            text = ConsoleCardColors.toHex(paint.text());
+            dot = ConsoleCardColors.toHex(paint.indicator());
         }
 
         mSummaryBadge.setStyle("-fx-background-color: " + fill + "; -fx-border-color: " + outline + ";");

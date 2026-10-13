@@ -59,13 +59,19 @@ import org.slf4j.LoggerFactory;
  *       from FlatLaf's just-installed values so each theme's palette propagates to JIDE widgets
  *       automatically.</li>
  *   <li>The dark JavaFX stylesheet is applied to (or removed from) every registered Scene
- *       depending on the theme's dark flag.</li>
+ *       depending on the theme's dark flag, except scenes that opt out with
+ *       {@link #excludeFromDarkStylesheet(Scene)} because they provide their own dark palette.</li>
  * </ul>
  */
 public class ThemeManager
 {
     private final static Logger mLog = LoggerFactory.getLogger(ThemeManager.class);
     private static final String DARK_STYLESHEET = "/sdrtrunk_dark.css";
+    /**
+     * Scene property key: a scene whose properties map this key to {@link Boolean#TRUE} never receives the dark
+     * JavaFX stylesheet (see {@link #excludeFromDarkStylesheet(Scene)}).
+     */
+    public static final String EXCLUDE_DARK_STYLESHEET_PROPERTY = "sdrtrunk.theme.excludeDarkStylesheet";
     private static final ThemeManager INSTANCE = new ThemeManager();
 
     private final Set<WeakReference<Scene>> mScenes = new LinkedHashSet<>();
@@ -221,6 +227,36 @@ public class ThemeManager
         return mCurrentTheme != null && mCurrentTheme.isDark();
     }
 
+    /**
+     * Excludes a Scene from the dark JavaFX stylesheet, for windows that provide their own light and dark palettes
+     * (e.g. the radio console).  The per-theme accent stylesheet is still applied.  Popup windows (menus, tooltips) and
+     * dialogs owned by the window have their own scenes and are not excluded.  Invoke on the JavaFX application thread,
+     * before the window is shown.
+     * @param scene to exclude
+     */
+    public void excludeFromDarkStylesheet(Scene scene)
+    {
+        if(scene == null)
+        {
+            return;
+        }
+
+        scene.getProperties().put(EXCLUDE_DARK_STYLESHEET_PROPERTY, Boolean.TRUE);
+
+        if(mDarkStylesheetUrl != null)
+        {
+            scene.getStylesheets().remove(mDarkStylesheetUrl);
+        }
+    }
+
+    /**
+     * Indicates if the Scene is excluded from the dark JavaFX stylesheet.
+     */
+    private static boolean isExcludedFromDarkStylesheet(Scene scene)
+    {
+        return Boolean.TRUE.equals(scene.getProperties().get(EXCLUDE_DARK_STYLESHEET_PROPERTY));
+    }
+
     public void register(Scene scene)
     {
         if(scene == null)
@@ -353,8 +389,9 @@ public class ThemeManager
 
     /**
      * Update a Scene's stylesheets to match the current theme: ensures the dark-mode CSS is
-     * present iff {@code darkMode}, removes {@code previousAccentUrl} if present, and ensures
-     * {@code nextAccentUrl} is present so theme-specific accent colours are applied.
+     * present iff {@code darkMode} (and the scene is not excluded from it), removes
+     * {@code previousAccentUrl} if present, and ensures {@code nextAccentUrl} is present so
+     * theme-specific accent colours are applied.
      */
     private void applyToScene(Scene scene, boolean darkMode, String previousAccentUrl,
                               String nextAccentUrl)
@@ -363,7 +400,7 @@ public class ThemeManager
             if(mDarkStylesheetUrl != null)
             {
                 scene.getStylesheets().remove(mDarkStylesheetUrl);
-                if(darkMode)
+                if(darkMode && !isExcludedFromDarkStylesheet(scene))
                 {
                     scene.getStylesheets().add(mDarkStylesheetUrl);
                 }

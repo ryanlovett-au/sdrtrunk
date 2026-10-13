@@ -34,6 +34,8 @@ import io.github.dsheirer.console.ConsoleAliasDrop;
 import io.github.dsheirer.console.control.ControlChannelMonitor;
 import io.github.dsheirer.console.control.NetworkSiteDetailProvider;
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.controller.channel.ChannelModel;
+import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.ApplicationWindowRegistry;
 import io.github.dsheirer.gui.DirectoryOpener;
@@ -41,6 +43,7 @@ import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.playlist.ViewPlaylistRequest;
 import io.github.dsheirer.gui.playlist.alias.sheet.ViewAliasSheetRequest;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
+import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.preference.PreferenceType;
@@ -70,6 +73,7 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckMenuItem;
+import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
@@ -91,7 +95,6 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
-import javafx.scene.text.Font;
 import javafx.util.Duration;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.javafx.IconNode;
@@ -106,6 +109,13 @@ import org.slf4j.LoggerFactory;
  * and with the same icons as the main window's View menu) and Console (layout editing and console settings).  The menu
  * bar is part of the window (not the macOS system menu bar), like the main window's Swing menu bar, and is styled from
  * the active Swing (FlatLaf) theme (see ConsoleMenuTheme), updated when the theme changes.
+ *
+ * Palette: the console uses a light or dark palette (ConsoleCardColors.Palette and the looked-up colours in console.css)
+ * following the sdrtrunk theme: the dark palette when the theme selected in the application preferences is dark
+ * (Theme.isDark(), the same flag that the ThemeManager uses for the application's dark JavaFX stylesheet).  The palette
+ * is switched live when the application preferences change.  The console scene is excluded from the application's dark
+ * stylesheet, which would override the console's colours; the console's dialogs are standard dialogs that follow the
+ * application theme.
  *
  * The window is a separate JavaFX stage that registers with the application window registry as a keep-alive window,
  * so closing the main window hides it (instead of exiting) while the console is showing, and closing the console
@@ -149,6 +159,8 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     private String mStylesheet;
     private String mMenuStylesheet;
     private Stage mStage;
+    private VBox mRoot;
+    private ConsoleCardColors.Palette mPalette = ConsoleCardColors.Palette.LIGHT;
     private Timeline mRefreshTimeline;
     private ConsoleLayout mLayout = new ConsoleLayout();
     private boolean mEditMode;
@@ -185,16 +197,36 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     public ConsoleWindow(PlaylistManager playlistManager, UserPreferences userPreferences,
                          ApplicationWindowRegistry applicationWindowRegistry, ConsoleActivityRouter activityRouter)
     {
-        mLayoutManager = playlistManager.getConsoleLayoutManager();
-        mConsoleCardResolver = playlistManager.getConsoleCardResolver();
-        mAliasModel = playlistManager.getAliasModel();
+        this(playlistManager.getConsoleLayoutManager(), playlistManager.getConsoleCardResolver(),
+            playlistManager.getAliasModel(), playlistManager.getChannelModel(),
+            playlistManager.getChannelProcessingManager(), userPreferences, applicationWindowRegistry, activityRouter);
+    }
+
+    /**
+     * Constructs an instance from the playlist's models.
+     * @param layoutManager for the console layout
+     * @param consoleCardResolver for the console talkgroup filter state
+     * @param aliasModel for the card aliases
+     * @param channelModel for the control channels
+     * @param channelProcessingManager for the control channel state
+     * @param userPreferences for window size and position, data folders and the theme, or null to use defaults (the
+     * light palette, and the window size and position are not stored)
+     * @param applicationWindowRegistry for the keep-alive window lifecycle and to show the main window
+     * @param activityRouter providing the console card activity
+     */
+    ConsoleWindow(ConsoleLayoutManager layoutManager, ConsoleCardResolver consoleCardResolver, AliasModel aliasModel,
+                  ChannelModel channelModel, ChannelProcessingManager channelProcessingManager,
+                  UserPreferences userPreferences, ApplicationWindowRegistry applicationWindowRegistry,
+                  ConsoleActivityRouter activityRouter)
+    {
+        mLayoutManager = layoutManager;
+        mConsoleCardResolver = consoleCardResolver;
+        mAliasModel = aliasModel;
         mUserPreferences = userPreferences;
         mApplicationWindowRegistry = applicationWindowRegistry;
         mActivityRouter = activityRouter;
-        mControlChannelMonitor = new ControlChannelMonitor(playlistManager.getChannelModel(),
-            playlistManager.getChannelProcessingManager());
-        mControlChannelMonitor.setDetailProvider(
-            new NetworkSiteDetailProvider(playlistManager.getChannelProcessingManager()));
+        mControlChannelMonitor = new ControlChannelMonitor(channelModel, channelProcessingManager);
+        mControlChannelMonitor.setDetailProvider(new NetworkSiteDetailProvider(channelProcessingManager));
         mActivityRouter.setDecodedSiteResolver(mControlChannelMonitor);
     }
 
@@ -266,6 +298,49 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     }
 
     /**
+     * Console colour palette (light or dark), following the sdrtrunk theme.
+     */
+    ConsoleCardColors.Palette getPalette()
+    {
+        return mPalette;
+    }
+
+    /**
+     * Palette for the theme selected in the application preferences: dark when the theme is dark.
+     */
+    private ConsoleCardColors.Palette getThemePalette()
+    {
+        return ConsoleCardColors.Palette.of(mUserPreferences != null &&
+            mUserPreferences.getApplicationPreference().getTheme().isDark());
+    }
+
+    /**
+     * Applies the palette: the dark style class on the console root (which switches the stylesheet's looked-up
+     * colours), and rebuilds the cards and groups, whose alias colour dependent colours are calculated for the palette.
+     */
+    void setPalette(ConsoleCardColors.Palette palette)
+    {
+        if(palette == null || palette == mPalette)
+        {
+            return;
+        }
+
+        mPalette = palette;
+
+        if(mRoot != null)
+        {
+            mRoot.getStyleClass().remove(ConsoleCardColors.Palette.DARK_STYLE_CLASS);
+
+            if(palette.isDark())
+            {
+                mRoot.getStyleClass().add(ConsoleCardColors.Palette.DARK_STYLE_CLASS);
+            }
+
+            rebuild();
+        }
+    }
+
+    /**
      * Groups of the current layout snapshot, in display order.
      */
     List<ConsoleGroup> getGroups()
@@ -292,11 +367,19 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
             }
         });
         MenuBar menuBar = createMenuBar();
-        VBox root = new VBox(menuBar, createHeader(), createControlChannelStrip(), groupsScrollPane,
-            mActivityLogView);
-        root.getStyleClass().add("console-root");
+        mRoot = new VBox(menuBar, createHeader(), createControlChannelStrip(), groupsScrollPane, mActivityLogView);
+        mRoot.getStyleClass().add("console-root");
+        mPalette = getThemePalette();
 
-        Scene scene = new Scene(root, 1280, 860);
+        if(mPalette.isDark())
+        {
+            mRoot.getStyleClass().add(ConsoleCardColors.Palette.DARK_STYLE_CLASS);
+        }
+
+        Scene scene = new Scene(mRoot, 1280, 860);
+
+        //The console has its own dark palette: the application's dark stylesheet would override the console's colours
+        ThemeManager.getInstance().excludeFromDarkStylesheet(scene);
 
         if(mStylesheet != null)
         {
@@ -319,7 +402,11 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         mStage.setScene(scene);
         mStage.setMinWidth(420);
         mStage.setMinHeight(360);
-        mUserPreferences.getJavaFxPreferences().monitor(mStage, STAGE_MONITOR_KEY);
+
+        if(mUserPreferences != null)
+        {
+            mUserPreferences.getJavaFxPreferences().monitor(mStage, STAGE_MONITOR_KEY);
+        }
 
         mRefreshTimeline = new Timeline(new KeyFrame(REFRESH_INTERVAL, event -> refresh()));
         mRefreshTimeline.setCycleCount(Animation.INDEFINITE);
@@ -468,8 +555,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
             return;
         }
 
-        List<String> families = Font.getFamilies();
-        String stylesheet = theme.toStylesheetUri(families::contains);
+        String stylesheet = theme.toStylesheetUri(ConsoleFonts::getMatchingFamily);
 
         if(mMenuStylesheet != null)
         {
@@ -1032,7 +1118,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     private int getInkColor(String cardId)
     {
         ConsoleCardView cardView = mCardViews.get(cardId);
-        return cardView != null ? ConsoleCardColors.getInkColor(cardView.getBaseColor()) : -1;
+        return cardView != null ? ConsoleCardColors.getInkColor(cardView.getBaseColor(), mPalette) : -1;
     }
 
     /**
@@ -1173,6 +1259,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     {
         AliasPickerDialog dialog = new AliasPickerDialog(mStage, mStylesheet, mAliasModel, this::getAssignedGroupName,
             "Add Talkgroup", "Choose the alias for the new console card");
+        applyPalette(dialog);
         dialog.showAndWait().ifPresent(alias -> {
             try
             {
@@ -1195,6 +1282,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
             " '" + card.getSignature().getAliasName() + "'" : "";
         AliasPickerDialog dialog = new AliasPickerDialog(mStage, mStylesheet, mAliasModel, this::getAssignedGroupName,
             "Re-link Card", "Choose the alias for console card" + name);
+        applyPalette(dialog);
         dialog.showAndWait().ifPresent(alias -> {
             try
             {
@@ -1240,15 +1328,30 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     }
 
     /**
-     * Sets the owner and stylesheet for a dialog.
+     * Sets the owner, stylesheet and palette for a dialog.
      */
-    private void prepare(javafx.scene.control.Dialog<?> dialog)
+    private void prepare(Dialog<?> dialog)
     {
         dialog.initOwner(mStage);
 
         if(mStylesheet != null)
         {
             dialog.getDialogPane().getStylesheets().add(mStylesheet);
+        }
+
+        applyPalette(dialog);
+    }
+
+    /**
+     * Adds the dark style class to the dialog's pane for the dark palette.  The dialogs are standard dialogs that
+     * follow the application theme (the theme manager applies the application's dark stylesheet to their scenes); the
+     * style class selects the console stylesheet's dark rules for console specific dialog content.
+     */
+    private void applyPalette(Dialog<?> dialog)
+    {
+        if(mPalette.isDark())
+        {
+            dialog.getDialogPane().getStyleClass().add(ConsoleCardColors.Palette.DARK_STYLE_CLASS);
         }
     }
 
@@ -1266,7 +1369,8 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
 
     /**
      * Guava event bus listener for application preference changes, which include theme changes: the menu theme is
-     * re-read after the theme manager has installed the new look and feel.
+     * re-read after the theme manager has installed the new look and feel, and the console palette follows the theme's
+     * dark flag.
      */
     public class ThemeListener
     {
@@ -1276,6 +1380,8 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
             if(preferenceType == PreferenceType.APPLICATION)
             {
                 updateMenuTheme();
+                ConsoleCardColors.Palette palette = getThemePalette();
+                Platform.runLater(() -> setPalette(palette));
             }
         }
     }

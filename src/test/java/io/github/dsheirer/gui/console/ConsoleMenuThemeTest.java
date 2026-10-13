@@ -20,6 +20,7 @@ package io.github.dsheirer.gui.console;
 
 import com.formdev.flatlaf.FlatDarkLaf;
 import com.formdev.flatlaf.FlatLightLaf;
+import java.awt.Font;
 import java.util.Map;
 import javax.swing.UIDefaults;
 import org.junit.jupiter.api.Test;
@@ -65,16 +66,32 @@ public class ConsoleMenuThemeTest
         ConsoleMenuTheme theme = ConsoleMenuTheme.from(Map.<String,Object>of()::get, 1.5);
         assertEquals(0xFFFFFF, theme.popupBackground(), "Fallback popup background");
         assertEquals(19.5, theme.fontSize(), 0.01, "Scaled default font size");
-        String css = theme.toStylesheet(family -> false);
+        String css = theme.toStylesheet(family -> null);
         assertFalse(css.contains("-fx-font-family"), "Expected no font family when none is defined");
         assertTrue(css.contains("-fx-background-radius: 6.0"), "Expected a scaled corner radius: " + css);
+    }
+
+    @Test
+    void fontSizeIsNotScaledTwiceAndRowsMatchSwing()
+    {
+        //FlatLaf fonts are already scaled by the user interface scale (flatlaf.uiScale)
+        Font font = new Font("Dialog", Font.PLAIN, 20);
+        ConsoleMenuTheme theme = ConsoleMenuTheme.from(Map.<String,Object>of("MenuItem.font", font)::get, 1.5);
+        assertEquals(20.0, theme.fontSize(), 0.01, "Expected the (already scaled) Swing font size");
+        assertEquals(Math.round(theme.fontHeight() + 9.0), theme.getItemHeight(), 0.01,
+            "Expected the font height plus the scaled 3 px item margins");
+
+        String css = theme.toStylesheet(family -> "Mapped Family");
+        String height = String.format(java.util.Locale.ROOT, "%.1f", theme.getItemHeight());
+        assertTrue(css.contains("-fx-font-family: \"Mapped Family\""), "Expected the mapped font family: " + css);
+        assertTrue(css.contains("-fx-pref-height: " + height), "Expected the Swing row height: " + css);
     }
 
     @Test
     void stylesheetIsScopedToTheConsoleMenuBar()
     {
         ConsoleMenuTheme theme = ConsoleMenuTheme.from(new FlatLightLaf().getDefaults()::get, 1.0);
-        String css = theme.toStylesheet(family -> true);
+        String css = theme.toStylesheet(family -> family);
 
         for(String line: css.split("\n"))
         {
@@ -91,6 +108,6 @@ public class ConsoleMenuThemeTest
         assertTrue(css.contains(".menu-item:focused { -fx-background-color: #2675BF; }"), "Selection: " + css);
         assertTrue(css.contains(".menu-icon { -fx-fill: #000000; }"), "Icon colour: " + css);
         assertTrue(css.contains("-fx-font-family: \"" + theme.fontFamily() + "\""), "Font family: " + css);
-        assertTrue(theme.toStylesheetUri(family -> true).startsWith("data:text/css;base64,"), "Data URI");
+        assertTrue(theme.toStylesheetUri(family -> family).startsWith("data:text/css;base64,"), "Data URI");
     }
 }

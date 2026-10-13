@@ -114,7 +114,12 @@ bar). It is styled at runtime to look like the main window's Swing (FlatLaf) men
 `gui.console.ConsoleMenuTheme` reads the FlatLaf `UIManager` values on the Swing thread (MenuBar/PopupMenu/MenuItem
 colours, accelerator and disabled colours, separator, check mark colour, popup corner radius and shadow, menu font and
 UI scale) and generates a stylesheet scoped to `.console-menu-bar` (including the label text nodes, which the dark
-JavaFX stylesheet styles directly). It is re-applied on application preference (theme) changes.
+JavaFX stylesheet styles directly). It is re-applied on application preference (theme) changes. The menu font is the
+Swing menu font's family and size (FlatLaf fonts are already scaled by the GUI scale, so the size is not scaled again),
+mapped to the JavaFX family that renders the same face (`ConsoleFonts.getMatchingFamily()`): macOS system font names
+(`.AppleSystemUIFont`) map to JavaFX `System`; on macOS JavaFX resolves FlatLaf's `Helvetica Neue` to the Thin face, so
+the regular face is loaded from `/System/Library/Fonts/HelveticaNeue.ttc` (falling back to `System`). Menu bar items and
+menu items have the Swing row height (font height plus the 3 px FlatLaf margins, e.g. 23 px at 100%).
 
 - **File:** Traditional view (shows the main window), Exit.
 - **View:** the main window's View menu items, labels, order and FontAwesome icons: Playlist Editor, Alias Sheet,
@@ -127,6 +132,30 @@ JavaFX stylesheet styles directly). It is re-applied on application preference (
   clear audio from encrypted talkgroups.
 
 The header keeps the title, the Edit layout button, the Console mode switch and the clock (wrapping at narrow widths).
+
+## Light and dark palettes
+
+The console follows the sdrtrunk theme: the dark palette ("Night Ops") when the theme selected in the application
+preferences is dark (`Theme.isDark()`, the flag the `ThemeManager` uses for `sdrtrunk_dark.css`), switched live on
+application preference changes (the same event bus hook as the menu theme; the console root gets the `dark` style class
+and the groups and cards are rebuilt). The console scene opts out of the application's dark stylesheet
+(`ThemeManager.excludeFromDarkStylesheet()`), whose `.text` and button rules would override the console's colours; the
+per-theme accent stylesheet still applies. Popups (menus, tooltips, card context menu) and the console's dialogs (alias
+picker, confirmations, errors) are standard JavaFX windows that follow the application theme; the alias picker gets the
+`dark` style class for its dimmed (already on the console) rows.
+
+- **Stylesheet:** all colours in `console.css` are looked-up colours defined once per palette: `-console-*` on
+  `.console-root` / `.console-root.dark` (window, header, switch, control strip, hint banner, groups, drop highlight,
+  activity log) and `-card-*` per card state (status pills, mute/pan/volume controls, edit controls).
+- **Alias colour dependent colours** (`ConsoleCardColors.Palette`): card fill, border and text (set inline, including the
+  `-card-text`/`-card-sub` tokens), collapsed group badges and the activity log talkgroup ink. Dark: idle `#161C24` /
+  `#283140` with `#E6EDF3` text; active cards keep the alias colour (lightened when needed) with near-black text; muted
+  = 30% alias colour mixed into the idle surface with a dashed alias-colour border; hang = 13% tint with an alias-colour
+  border (tints reduced when needed for the light text); encrypted `#B794F6`; selected pan segment inverted.
+- **Contrast:** `ConsoleCardColorsTest` checks every text/background pair at 4.5:1 (3:1 for borders, dots and icons in
+  the dark palette) for the 12 test alias colours plus very dark and very light colours, reading the token values from
+  `console.css`. The light palette is unchanged except the unlinked status pill (`#5F6B78`, was 4.4:1), the drag handle
+  on live cards (`#1F2E3F`) and the alias picker's assigned rows (a text colour instead of 50% opacity).
 
 ## Collapsible and muted groups
 

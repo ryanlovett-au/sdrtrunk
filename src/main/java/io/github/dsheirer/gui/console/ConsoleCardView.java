@@ -119,7 +119,7 @@ public class ConsoleCardView extends VBox
         mConsoleWindow = consoleWindow;
         mCard = card;
         mGroupId = groupId;
-        mBaseColor = ConsoleCardColors.getBaseColor(0, card.getId());
+        mBaseColor = ConsoleCardColors.getBaseColor(0, card.getId(), consoleWindow.getPalette());
         getStyleClass().add("card");
 
         //Row 1: drag handle (edit mode), name, talkgroup and remove button (edit mode)
@@ -279,7 +279,7 @@ public class ConsoleCardView extends VBox
     }
 
     /**
-     * Current base (active) colour for this card.
+     * Current base (active) colour for this card, for the console window's palette.
      */
     public int getBaseColor()
     {
@@ -350,7 +350,7 @@ public class ConsoleCardView extends VBox
         mAliasInfo = aliasInfo;
         mNameLabel.setText(aliasInfo.name());
         mTalkgroupLabel.setText(aliasInfo.identifier());
-        mBaseColor = ConsoleCardColors.getBaseColor(aliasInfo.color(), mCard.getId());
+        mBaseColor = ConsoleCardColors.getBaseColor(aliasInfo.color(), mCard.getId(), mConsoleWindow.getPalette());
         updateMuteButton();
         boolean linked = aliasInfo.linked();
         mControlsRow.setVisible(linked);
@@ -534,7 +534,9 @@ public class ConsoleCardView extends VBox
     }
 
     /**
-     * Applies the style classes and the (alias colour dependent) fill and border for the visual state.
+     * Applies the style classes and the (alias colour dependent) fill, border and text colours for the visual state in
+     * the console window's palette.  The text colours are set as the looked-up colours that the stylesheet uses for
+     * the card's labels ('-card-text' and '-card-sub').
      */
     private void applyVisualState(ConsoleCardColors.VisualState state, boolean clearAlert)
     {
@@ -559,10 +561,12 @@ public class ConsoleCardView extends VBox
             getStyleClass().add("live");
         }
 
-        ConsoleCardColors.CardPaint paint = ConsoleCardColors.getPaint(mBaseColor, state);
+        ConsoleCardColors.CardPaint paint = ConsoleCardColors.getPaint(mBaseColor, state, mConsoleWindow.getPalette());
         setStyle("-fx-background-color: " + ConsoleCardColors.toHex(paint.fill()) + "; -fx-border-color: " +
             (clearAlert ? CLEAR_ALERT_BORDER : ConsoleCardColors.toHex(paint.border())) + "; -fx-border-style: " +
-            (paint.dashed() && !clearAlert ? "segments(6, 4)" : "solid") + ";");
+            (paint.dashed() && !clearAlert ? "segments(6, 4)" : "solid") + "; -card-text: " +
+            ConsoleCardColors.toHex(paint.text()) + "; -card-sub: " + ConsoleCardColors.toHex(paint.secondaryText()) +
+            ";");
         mStatusPill.setText(clearAlert ? "CLEAR" : state.getLabel());
         setAccessibleText(mAliasInfo.name() + ", " + (clearAlert ? "clear audio on an encrypted talkgroup" :
             state.getLabel()));
