@@ -19,6 +19,7 @@
 package io.github.dsheirer.gui.console;
 
 import io.github.dsheirer.console.AudioPan;
+import io.github.dsheirer.console.ClearAudioAlert;
 import io.github.dsheirer.console.ConsoleCard;
 import io.github.dsheirer.console.ConsoleGroup;
 import io.github.dsheirer.console.activity.ConsoleCardActivity;
@@ -31,6 +32,7 @@ import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.RadioMenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.Slider;
 import javafx.scene.control.ToggleButton;
@@ -49,6 +51,10 @@ import javafx.scene.shape.SVGPath;
  * Console card view: alias name and talkgroup, status pill with current talker and site, recent talkers, and the mute,
  * pan (L/B/R) and volume controls.  Unlinked cards (alias not found) show re-link and remove actions instead.
  *
+ * Cards whose talkgroup is treated as normally encrypted (see ConsoleCard.isTreatedAsEncrypted()) show a lock outline
+ * next to the talkgroup.  While a call on the card raised a clear audio (encryption slip) alert, the card shows a red
+ * CLEAR status pill and a red border.
+ *
  * Audio settings changes are applied via the console layout manager; the view is updated from layout manager events
  * (setCard()) and from console activity snapshots (setActivity()).  Invoke all methods on the JavaFX thread.
  */
@@ -62,6 +68,9 @@ public class ConsoleCardView extends VBox
     private static final String MUTED_ICON = "M11 5 L6 9 H3 V15 H6 L11 19 Z M16 9 L22 15 M22 9 L16 15";
     private static final String UNMUTED_ICON = "M11 5 L6 9 H3 V15 H6 L11 19 Z M15.5 8.5 A5 5 0 0 1 15.5 15.5 " +
         "M18.5 5.5 A9 9 0 0 1 18.5 18.5";
+    private static final String LOCK_ICON = "M7 11 V8 A5 5 0 0 1 17 8 V11 M5 11 H19 V21 H5 Z";
+    private static final String CLEAR_ALERT_STYLE_CLASS = "clear-alert";
+    private static final String CLEAR_ALERT_BORDER = "#D92D20";
 
     private final ConsoleWindow mConsoleWindow;
     private ConsoleCard mCard;
@@ -69,12 +78,14 @@ public class ConsoleCardView extends VBox
     private AliasInfo mAliasInfo = new AliasInfo(true, "", "", 0);
     private ConsoleCardActivity mActivity;
     private ConsoleCardColors.VisualState mVisualState;
+    private boolean mClearAlertShown;
     private int mBaseColor;
     private boolean mUpdating;
     private boolean mEditMode;
 
     private final Label mNameLabel = ConsoleFonts.condensed(new Label());
     private final Label mTalkgroupLabel = new Label();
+    private final Label mEncryptedIndicator = new Label();
     private final Label mStatusPill = new Label();
     private final Label mTalkerLabel = new Label();
     private final Label mSiteLabel = new Label();
@@ -121,7 +132,18 @@ public class ConsoleCardView extends VBox
         mRemoveButton.setAccessibleText("Remove from console");
         mRemoveButton.setMinWidth(Region.USE_PREF_SIZE);
         mRemoveButton.setOnAction(e -> mConsoleWindow.removeCard(mCard.getId()));
-        HBox nameRow = new HBox(8, mDragHandle, mNameLabel, mTalkgroupLabel, mRemoveButton);
+        SVGPath lockIcon = new SVGPath();
+        lockIcon.setContent(LOCK_ICON);
+        lockIcon.getStyleClass().add("lock-icon");
+        lockIcon.setScaleX(0.6);
+        lockIcon.setScaleY(0.6);
+        mEncryptedIndicator.setGraphic(lockIcon);
+        mEncryptedIndicator.getStyleClass().add("encrypted-indicator");
+        mEncryptedIndicator.setMinWidth(Region.USE_PREF_SIZE);
+        mEncryptedIndicator.setTooltip(new Tooltip("Normally encrypted talkgroup: clear (unencrypted) audio plays an " +
+            "alert tone. Right-click the card to change the clear-audio alert setting."));
+        mEncryptedIndicator.setAccessibleText("Normally encrypted talkgroup");
+        HBox nameRow = new HBox(8, mDragHandle, mNameLabel, mEncryptedIndicator, mTalkgroupLabel, mRemoveButton);
         nameRow.setAlignment(Pos.CENTER_LEFT);
 
         //Row 2: status pill, talker and site
@@ -195,6 +217,7 @@ public class ConsoleCardView extends VBox
         mVolumeSlider.getStyleClass().add("volume-slider");
         mVolumeSlider.setMinWidth(40);
         mVolumeSlider.setAccessibleText("Volume");
+
         HBox.setHgrow(mVolumeSlider, Priority.ALWAYS);
         mVolumeSlider.valueProperty().addListener((observable, oldValue, newValue) -> {
             mVolumeLabel.setText(String.valueOf((int)Math.round(newValue.doubleValue())));
@@ -332,6 +355,9 @@ public class ConsoleCardView extends VBox
             }
 
             mVolumeLabel.setText(String.valueOf((int)Math.round(mVolumeSlider.getValue())));
+            boolean encrypted = card.isTreatedAsEncrypted();
+            mEncryptedIndicator.setVisible(encrypted);
+            mEncryptedIndicator.setManaged(encrypted);
         }
         finally
         {
@@ -409,9 +435,11 @@ public class ConsoleCardView extends VBox
 
         mRecentLabel.setText("Recent: " + getRecentText(mActivity.recentTalkers()));
 
-        if(state != mVisualState)
+        boolean clearAlert = mActivity.clearAlert() && state.isLive();
+
+        if(state != mVisualState || clearAlert != mClearAlertShown)
         {
-            applyVisualState(state);
+            applyVisualState(state, clearAlert);
         }
     }
 
@@ -443,17 +471,23 @@ public class ConsoleCardView extends VBox
     /**
      * Applies the style classes and the (alias colour dependent) fill and border for the visual state.
      */
-    private void applyVisualState(ConsoleCardColors.VisualState state)
+    private void applyVisualState(ConsoleCardColors.VisualState state, boolean clearAlert)
     {
         mVisualState = state;
+        mClearAlertShown = clearAlert;
 
         for(ConsoleCardColors.VisualState visualState: ConsoleCardColors.VisualState.values())
         {
             getStyleClass().remove(visualState.getStyleClass());
         }
 
-        getStyleClass().remove("live");
+        getStyleClass().removeAll("live", CLEAR_ALERT_STYLE_CLASS);
         getStyleClass().add(state.getStyleClass());
+
+        if(clearAlert)
+        {
+            getStyleClass().add(CLEAR_ALERT_STYLE_CLASS);
+        }
 
         if(state.isLive())
         {
@@ -462,10 +496,11 @@ public class ConsoleCardView extends VBox
 
         ConsoleCardColors.CardPaint paint = ConsoleCardColors.getPaint(mBaseColor, state);
         setStyle("-fx-background-color: " + ConsoleCardColors.toHex(paint.fill()) + "; -fx-border-color: " +
-            ConsoleCardColors.toHex(paint.border()) + "; -fx-border-style: " +
-            (paint.dashed() ? "segments(6, 4)" : "solid") + ";");
-        mStatusPill.setText(state.getLabel());
-        setAccessibleText(mAliasInfo.name() + ", " + state.getLabel());
+            (clearAlert ? CLEAR_ALERT_BORDER : ConsoleCardColors.toHex(paint.border())) + "; -fx-border-style: " +
+            (paint.dashed() && !clearAlert ? "segments(6, 4)" : "solid") + ";");
+        mStatusPill.setText(clearAlert ? "CLEAR" : state.getLabel());
+        setAccessibleText(mAliasInfo.name() + ", " + (clearAlert ? "clear audio on an encrypted talkgroup" :
+            state.getLabel()));
     }
 
     /**
@@ -502,8 +537,37 @@ public class ConsoleCardView extends VBox
         MenuItem remove = new MenuItem("Remove from console");
         remove.setOnAction(e -> mConsoleWindow.removeCard(mCard.getId()));
 
-        contextMenu.getItems().addAll(moveToMenu, moveUp, moveDown, new SeparatorMenuItem(), relink, remove);
+        contextMenu.getItems().addAll(moveToMenu, moveUp, moveDown, new SeparatorMenuItem(), createClearAudioAlertMenu(),
+            new SeparatorMenuItem(), relink, remove);
         return contextMenu;
+    }
+
+    /**
+     * Creates the clear audio (encryption slip) alert menu: Auto (learned), Always or Never.
+     */
+    private Menu createClearAudioAlertMenu()
+    {
+        Menu menu = new Menu("Clear-audio alert");
+        ToggleGroup toggleGroup = new ToggleGroup();
+
+        for(ClearAudioAlert setting: ClearAudioAlert.values())
+        {
+            String label = switch(setting)
+            {
+                case AUTO -> "Auto" + (mCard.isEncryptedLearned() ? " (learned: normally encrypted)" :
+                    " (learns after " + ConsoleCard.ENCRYPTED_CALLS_TO_LEARN + " encrypted calls)");
+                case ALWAYS -> "Always (treat as encrypted)";
+                case NEVER -> "Never";
+            };
+
+            RadioMenuItem item = new RadioMenuItem(label);
+            item.setToggleGroup(toggleGroup);
+            item.setSelected(mCard.getClearAudioAlert() == setting);
+            item.setOnAction(e -> mConsoleWindow.getLayoutManager().setCardClearAudioAlert(mCard.getId(), setting));
+            menu.getItems().add(item);
+        }
+
+        return menu;
     }
 
     /**

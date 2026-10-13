@@ -78,6 +78,7 @@ public class ConsoleVoice implements Listener<IdentifierUpdateNotification>
     private boolean mStopping;
     private boolean mReleased;
     private volatile boolean mIdentifiersUpdated = true;
+    private boolean mClearAudioAlerted;
     private ConsoleCard mCard;
 
     /**
@@ -167,6 +168,22 @@ public class ConsoleVoice implements Listener<IdentifierUpdateNotification>
     public ConsoleCard getCard()
     {
         return mCard;
+    }
+
+    /**
+     * Indicates if the clear audio (encryption slip) alert has been raised for this voice (call).
+     */
+    public boolean isClearAudioAlerted()
+    {
+        return mClearAudioAlerted;
+    }
+
+    /**
+     * Sets the clear audio alert state for this voice (call).
+     */
+    public void setClearAudioAlerted(boolean clearAudioAlerted)
+    {
+        mClearAudioAlerted = clearAudioAlerted;
     }
 
     /**

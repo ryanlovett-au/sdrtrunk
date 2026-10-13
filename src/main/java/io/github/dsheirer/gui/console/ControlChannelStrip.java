@@ -32,19 +32,15 @@ import javafx.scene.layout.Region;
 
 /**
  * Control channel strip: one chip per running control channel (status dot, site, decoded site ID, frequency, decoded
- * network access code (P25 NAC, DMR color code or NXDN RAN) and decode quality, or the state when not decoding) and
- * a summary of the number of talkgroups on the console.  The summary is right-aligned when everything fits
- * on one row; otherwise it flows after the chips so that the chips can wrap side by side.  Invoke all methods on the
- * JavaFX thread.
+ * network access code (P25 NAC, DMR color code or NXDN RAN) and decode quality, or the state when not decoding).
+ * Invoke all methods on the JavaFX thread.
  */
 public class ControlChannelStrip extends HBox
 {
     private static final String UNKNOWN = "\u2014";
     private final FlowPane mChips = new FlowPane(8, 6);
     private final Label mTitleLabel = ConsoleFonts.condensed(new Label("CONTROL"));
-    private final Label mSummaryLabel = new Label();
     private List<ControlChannelStatus> mStatuses;
-    private String mSummary;
 
     /**
      * Constructs an instance
@@ -61,89 +57,37 @@ public class ControlChannelStrip extends HBox
         mChips.setPrefWrapLength(800);
         HBox.setHgrow(mChips, Priority.ALWAYS);
 
-        mSummaryLabel.getStyleClass().add("secondary");
-        mSummaryLabel.setMinWidth(Region.USE_PREF_SIZE);
-
-        getChildren().addAll(mTitleLabel, mChips, mSummaryLabel);
-        widthProperty().addListener((observable, oldValue, width) -> updateSummaryPlacement());
-        update(List.of(), 0, false);
-    }
-
-    /**
-     * Places the summary label at the right end of the strip when the title, chips and summary fit on one row,
-     * otherwise as the last item of the chip flow so that the chips are not squeezed into one chip per row.
-     */
-    private void updateSummaryPlacement()
-    {
-        if(getWidth() <= 0)
-        {
-            return;
-        }
-
-        double required = snappedLeftInset() + snappedRightInset() + mTitleLabel.prefWidth(-1) +
-            mSummaryLabel.prefWidth(-1) + getSpacing() * 2;
-
-        for(var chip: mChips.getChildren())
-        {
-            if(chip != mSummaryLabel)
-            {
-                required += chip.prefWidth(-1) + mChips.getHgap();
-            }
-        }
-
-        boolean inline = required <= getWidth();
-
-        if(inline && mSummaryLabel.getParent() != this)
-        {
-            mChips.getChildren().remove(mSummaryLabel);
-            getChildren().add(mSummaryLabel);
-        }
-        else if(!inline && mSummaryLabel.getParent() != mChips)
-        {
-            getChildren().remove(mSummaryLabel);
-            mChips.getChildren().add(mSummaryLabel);
-        }
+        getChildren().addAll(mTitleLabel, mChips);
+        update(List.of());
     }
 
     /**
      * Updates the strip.  The chips are only rebuilt when the control channel status changes.
      * @param statuses for the running control channels
-     * @param talkgroupCount number of (linked) cards on the console
-     * @param filterActive true when calls for talkgroups that are not on the console are ignored
      */
-    public void update(List<ControlChannelStatus> statuses, int talkgroupCount, boolean filterActive)
+    public void update(List<ControlChannelStatus> statuses)
     {
-        if(!statuses.equals(mStatuses))
+        if(statuses.equals(mStatuses))
         {
-            mStatuses = statuses;
-            mChips.getChildren().removeIf(node -> node != mSummaryLabel);
-            int index = 0;
-
-            if(statuses.isEmpty())
-            {
-                Label none = new Label("No control channels running");
-                none.getStyleClass().add("secondary");
-                mChips.getChildren().add(index, none);
-            }
-            else
-            {
-                for(ControlChannelStatus status: statuses)
-                {
-                    mChips.getChildren().add(index++, createChip(status));
-                }
-            }
+            return;
         }
 
-        String summary = talkgroupCount + (talkgroupCount == 1 ? " talkgroup" : " talkgroups") + " on console" +
-            (filterActive ? " · others ignored" : "");
+        mStatuses = statuses;
+        mChips.getChildren().clear();
 
-        if(!summary.equals(mSummary))
+        if(statuses.isEmpty())
         {
-            mSummary = summary;
-            mSummaryLabel.setText(summary);
+            Label none = new Label("No control channels running");
+            none.getStyleClass().add("secondary");
+            mChips.getChildren().add(none);
         }
-
-        updateSummaryPlacement();
+        else
+        {
+            for(ControlChannelStatus status: statuses)
+            {
+                mChips.getChildren().add(createChip(status));
+            }
+        }
     }
 
     /**

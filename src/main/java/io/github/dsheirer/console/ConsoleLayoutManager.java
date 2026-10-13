@@ -945,6 +945,59 @@ public class ConsoleLayoutManager
     }
 
     /**
+     * Indicates if the activity log shows all traffic (true) or only calls on console cards (false).
+     */
+    public synchronized boolean isActivityLogShowAll()
+    {
+        return mLayout.isActivityLogShowAll();
+    }
+
+    /**
+     * Sets the activity log mode.
+     * @param showAll true to show all traffic, false to show only calls on console cards
+     */
+    public void setActivityLogShowAll(boolean showAll)
+    {
+        synchronized(this)
+        {
+            if(mLayout.isActivityLogShowAll() == showAll)
+            {
+                return;
+            }
+
+            mLayout.setActivityLogShowAll(showAll);
+        }
+
+        changed(new ConsoleLayoutEvent(ConsoleLayoutEvent.Type.SETTINGS_CHANGED, null, null));
+    }
+
+    /**
+     * Indicates if the clear audio (encryption slip) alert is enabled.
+     */
+    public synchronized boolean isClearAudioAlertEnabled()
+    {
+        return mLayout.isClearAudioAlertEnabled();
+    }
+
+    /**
+     * Enables or disables the clear audio (encryption slip) alert.
+     */
+    public void setClearAudioAlertEnabled(boolean enabled)
+    {
+        synchronized(this)
+        {
+            if(mLayout.isClearAudioAlertEnabled() == enabled)
+            {
+                return;
+            }
+
+            mLayout.setClearAudioAlertEnabled(enabled);
+        }
+
+        changed(new ConsoleLayoutEvent(ConsoleLayoutEvent.Type.SETTINGS_CHANGED, null, null));
+    }
+
+    /**
      * Adds a new (empty) group at the end of the group display order.
      * @param name of the group
      * @return snapshot of the new group
@@ -1244,6 +1297,29 @@ public class ConsoleLayoutManager
     }
 
     /**
+     * Sets the card's clear audio (encryption slip) alert setting.
+     * @param cardId to update
+     * @param clearAudioAlert setting (null is treated as AUTO)
+     * @return true if the card was found.
+     */
+    public boolean setCardClearAudioAlert(String cardId, ClearAudioAlert clearAudioAlert)
+    {
+        return updateCard(cardId, card -> card.setClearAudioAlert(clearAudioAlert));
+    }
+
+    /**
+     * Records a completed call on the card for learning whether the card's talkgroup is normally encrypted (see
+     * ConsoleCard.recordCall()).
+     * @param cardId to update
+     * @param encrypted true if the call was encrypted
+     * @return true if the card was found.
+     */
+    public boolean recordCardCall(String cardId, boolean encrypted)
+    {
+        return updateCard(cardId, card -> card.recordCall(encrypted));
+    }
+
+    /**
      * Applies the update to the card and broadcasts a CARD_CHANGED event when the card settings change.
      * @param cardId to update
      * @param update to apply
@@ -1263,13 +1339,11 @@ public class ConsoleLayoutManager
             }
 
             ConsoleCard card = group.getCard(cardId);
-            float volume = card.getVolume();
-            boolean muted = card.isMuted();
-            AudioPan pan = card.getPan();
+            ConsoleCard previous = card.copyOf();
 
             update.accept(card);
 
-            if(card.getVolume() == volume && card.isMuted() == muted && card.getPan() == pan)
+            if(card.hasSameState(previous))
             {
                 return true;
             }

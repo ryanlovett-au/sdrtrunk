@@ -32,18 +32,23 @@ import java.util.List;
  * ConsoleLayoutManager so that constraints are enforced and listeners are notified.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-@JsonPropertyOrder({"version", "consoleModeEnabled", "activityHangTimeMs", "talkgroupFilterEnabled", "groups"})
+@JsonPropertyOrder({"version", "consoleModeEnabled", "activityHangTimeMs", "talkgroupFilterEnabled",
+    "activityLogShowAll", "clearAudioAlertEnabled", "groups"})
 public class ConsoleLayout
 {
     public static final int CURRENT_VERSION = 1;
     public static final long DEFAULT_ACTIVITY_HANG_TIME_MS = 2000;
     public static final boolean DEFAULT_TALKGROUP_FILTER_ENABLED = true;
     public static final boolean DEFAULT_CONSOLE_MODE_ENABLED = false;
+    public static final boolean DEFAULT_ACTIVITY_LOG_SHOW_ALL = false;
+    public static final boolean DEFAULT_CLEAR_AUDIO_ALERT_ENABLED = true;
 
     private int mVersion = CURRENT_VERSION;
     private boolean mConsoleModeEnabled = DEFAULT_CONSOLE_MODE_ENABLED;
     private long mActivityHangTimeMs = DEFAULT_ACTIVITY_HANG_TIME_MS;
     private boolean mTalkgroupFilterEnabled = DEFAULT_TALKGROUP_FILTER_ENABLED;
+    private boolean mActivityLogShowAll = DEFAULT_ACTIVITY_LOG_SHOW_ALL;
+    private boolean mClearAudioAlertEnabled = DEFAULT_CLEAR_AUDIO_ALERT_ENABLED;
     private List<ConsoleGroup> mGroups = new ArrayList<>();
 
     /**
@@ -63,6 +68,8 @@ public class ConsoleLayout
         copy.setConsoleModeEnabled(isConsoleModeEnabled());
         copy.setActivityHangTimeMs(getActivityHangTimeMs());
         copy.setTalkgroupFilterEnabled(isTalkgroupFilterEnabled());
+        copy.setActivityLogShowAll(isActivityLogShowAll());
+        copy.setClearAudioAlertEnabled(isClearAudioAlertEnabled());
 
         for(ConsoleGroup group: mGroups)
         {
@@ -129,6 +136,35 @@ public class ConsoleLayout
     public void setTalkgroupFilterEnabled(boolean talkgroupFilterEnabled)
     {
         mTalkgroupFilterEnabled = talkgroupFilterEnabled;
+    }
+
+    /**
+     * Indicates if the console activity log shows all traffic (true) or only calls on console cards (false).
+     */
+    @JsonProperty("activityLogShowAll")
+    public boolean isActivityLogShowAll()
+    {
+        return mActivityLogShowAll;
+    }
+
+    public void setActivityLogShowAll(boolean activityLogShowAll)
+    {
+        mActivityLogShowAll = activityLogShowAll;
+    }
+
+    /**
+     * Indicates if the clear audio (encryption slip) alert is enabled: an alert tone is played when clear audio is
+     * received on a card whose talkgroup is treated as normally encrypted.
+     */
+    @JsonProperty("clearAudioAlertEnabled")
+    public boolean isClearAudioAlertEnabled()
+    {
+        return mClearAudioAlertEnabled;
+    }
+
+    public void setClearAudioAlertEnabled(boolean clearAudioAlertEnabled)
+    {
+        mClearAudioAlertEnabled = clearAudioAlertEnabled;
     }
 
     /**

@@ -40,6 +40,7 @@ activity and plays audio according to per-card settings.
 | Console mode | A `consoleModeEnabled` setting (default off). Only when on does the console mixer replace traditional playback and the talkgroup filter apply, so users without a console see no change. |
 | Persistence | One console layout per playlist, stored as a sidecar JSON file next to the playlist file and loaded when the playlist is loaded. Cards reference aliases by UUID (`uuid` XML attribute on `<alias>`). |
 | Alias re-binding | Each card also stores a fallback signature (alias list name, alias name, protocol and first talkgroup). If a card's UUID is not found (e.g. the playlist was saved by an older sdrtrunk that dropped the attribute), the card is re-bound by signature and its UUID updated; unmatched cards are kept and shown as unlinked. |
+| Clear audio alert | Learned per card (3 consecutive encrypted calls) with an Auto / Always / Never override; triggered by clear audio in the console mixer, once per call; beep on the card's side even when muted. |
 | Visual design | Direction C (classic dense: group columns, control channel strip, activity log) with Direction A's per-card mute button and L/B/R segmented control. Mockups: https://claude.ai/artifact/RbFMWcUYnqkm8DfLkdYwRV |
 
 ## Card states
@@ -93,6 +94,52 @@ Network configuration monitors ──► structured control channel snapshot ─
    (testable without JavaFX controls). Independent of phases 1–3. Selected rows can be dragged (press on an already
    selected cell and drag) onto a console group in the console window: one card per alias, cards in other groups are
    moved (`console.ConsoleAliasDrop`, custom data format of alias UUIDs).
+
+## Console window menus and header
+
+The console window has its own in-window menu bar (like the main window's Swing menu bar, not the macOS system menu
+bar), styled explicitly in `console.css` so the light menus keep dark text:
+
+- **File:** Traditional view (shows the main window), Exit.
+- **View:** Playlist Editor, Alias Sheet, User Preferences, Icon Manager, Message Recording Viewer (the same event bus
+  requests as the main window's View menu), then Application Log Files, Audio Recordings and Channel Event Log Files
+  (opened via `gui.DirectoryOpener`, shared with the main window). Main-window-only items (spectrum/waterfall, status
+  panels, tuners, screen capture, reports) are not repeated.
+- **Console:** Edit layout (Ctrl/Cmd+E, in sync with the header button), Add group…, Console mode, Follow only console
+  talkgroups, Activity hang time, Show all traffic in activity log, Alert on clear audio from encrypted talkgroups.
+
+The header keeps the title, the Edit layout button, the Console mode switch and the clock (wrapping at narrow widths).
+
+## Activity log: console only / all traffic
+
+The activity log title bar has a segmented "Console only | All traffic" toggle, persisted as `activityLogShowAll` in
+the console layout (default console only; also Console → Show all traffic in activity log). `ConsoleActivityRouter`
+keeps the console log (50 calls routed to cards) and an all-traffic log (200 entries) that adds the voice calls that do
+not resolve to a card. Both have one entry per call event, updated in place as the call progresses. Calls that are not
+on the console show the talkgroup alias name (or the TO identifier, including patch notation), are drawn in grey, and
+have the status:
+
+- **ENCRYPTED** — the call is encrypted.
+- **IGNORED** (amber) — a traffic channel manager did not allocate a traffic channel because of the console talkgroup
+  filter (the event details carry `TrafficChannelManager.NOT_ON_CONSOLE`).
+- **NOT ON CONSOLE** — decoded but not on a card (filter off, or a conventional channel with no grant).
+
+## Clear audio (encryption slip) alert
+
+Plays a short beep when a talkgroup that is normally encrypted carries clear audio.
+
+- **Normally encrypted:** each card records its completed calls (`ConsoleCard.recordCall()`, persisted as
+  `encryptedLearned`, `encryptedCallStreak`, `clearCallStreak`): a card is learned as encrypted after 3 consecutive
+  encrypted calls, and only unlearned after 5 consecutive clear calls, so repeated slips keep alerting. A call is recorded
+  once, when the card's next call starts or 5 s after its last update. The per-card right-click menu sets
+  "Clear-audio alert: Auto / Always / Never" (`clearAudioAlert`). Cards treated as encrypted show a lock outline.
+- **Trigger:** clear audio actually reaching the console mixer: a voice (call, including linked continuation segments)
+  that starts playing non-encrypted audio for a card treated as encrypted raises one alert per call. A grant without the
+  encryption flag does not alert on its own.
+- **Alert:** a two-tone beep (880 Hz then 1320 Hz, 120 ms each with smooth envelopes, about -12 dBFS) mixed on the
+  card's pan side(s) through the output limiter, even when the card is muted. The card shows a red CLEAR status pill and
+  red border while the call is active or hanging, and the call's activity log entries show **CLEAR ⚠**.
+- **Setting:** Console → Alert on clear audio from encrypted talkgroups (`clearAudioAlertEnabled`, default on).
 
 ## Decode quality
 

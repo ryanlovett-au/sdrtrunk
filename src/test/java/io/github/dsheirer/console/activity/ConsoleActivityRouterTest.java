@@ -37,6 +37,7 @@ import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.protocol.Protocol;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -47,6 +48,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -178,6 +180,194 @@ public class ConsoleActivityRouterTest
         ConsoleActivitySnapshot snapshot = mRouter.getSnapshot();
         assertTrue(snapshot.cards().isEmpty(), "Expected no card activity");
         assertTrue(snapshot.log().isEmpty(), "Expected no activity log entries");
+
+        //Voice calls that are not on the console are in the all-traffic log, but not the non-call events
+        assertEquals(3, snapshot.allTrafficLog().size(), "Expected the off-console voice calls in the all-traffic log");
+        assertTrue(snapshot.allTrafficLog().stream().noneMatch(ConsoleActivityLogEntry::isOnConsole),
+            "Expected off-console entries");
+    }
+
+    private static DecodeEvent call(DecodeEventType type, int talkgroup, Integer radio, long start, String details)
+    {
+        DecodeEvent event = call(type, talkgroup, radio, start);
+        event.setDetails(details);
+        return event;
+    }
+
+    @Test
+    void allTrafficLogIncludesCallsNotOnConsole()
+    {
+        //Aliased talkgroup without a card, unknown talkgroup, and a call on a card
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_OFF_CARD, RADIO_ALIASED, mClock.get()));
+        advance(100);
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, 9999, RADIO_2, mClock.get()));
+        advance(100);
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_3, mClock.get()));
+
+        ConsoleActivitySnapshot snapshot = mRouter.getSnapshot();
+        assertEquals(1, snapshot.log().size(), "Expected only the console call in the console log");
+        List<ConsoleActivityLogEntry> all = snapshot.allTrafficLog();
+        assertEquals(3, all.size(), "Expected all calls in the all-traffic log");
+
+        ConsoleActivityLogEntry console = all.get(0);
+        assertEquals(snapshot.log().getFirst(), console, "Expected the same entry in both logs");
+        assertTrue(console.isOnConsole());
+        assertEquals(ConsoleActivityLogEntry.Status.AUDIO, console.status());
+
+        ConsoleActivityLogEntry unknown = all.get(1);
+        assertNull(unknown.cardId(), "Expected no card");
+        assertEquals("9999", unknown.talkgroupName(), "Expected the TO identifier for an unaliased talkgroup");
+        assertEquals("9999", unknown.talkgroup());
+        assertEquals(String.valueOf(RADIO_2), unknown.radioId());
+        assertEquals(SITE, unknown.site());
+        assertEquals(ConsoleActivityLogEntry.Status.NOT_ON_CONSOLE, unknown.status());
+
+        ConsoleActivityLogEntry aliased = all.get(2);
+        assertEquals("Police Dispatch", aliased.talkgroupName(), "Expected the talkgroup alias name");
+        assertEquals(String.valueOf(TALKGROUP_OFF_CARD), aliased.talkgroup());
+        assertEquals("Pumper 12", aliased.radioName(), "Expected the radio alias name");
+        assertEquals(ConsoleActivityLogEntry.Status.NOT_ON_CONSOLE, aliased.status());
+        assertTrue(snapshot.cards().containsKey(mFireDispatchCard.getId()), "Expected only console card activity");
+        assertEquals(1, snapshot.cards().size(), "Expected no card activity for off-console calls");
+    }
+
+    @Test
+    void allTrafficLogStatusIgnoredAndEncrypted()
+    {
+        //P25/NXDN/MPT1327 prefix the details, DMR appends the indicator
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_OFF_CARD, RADIO_2, mClock.get(),
+            TrafficChannelManager.NOT_ON_CONSOLE + " - PHASE 1 CHANNEL GRANT"));
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, 3001, RADIO_2, mClock.get(),
+            "GROUP VOICE - " + TrafficChannelManager.NOT_ON_CONSOLE));
+        mRouter.receive(call(DecodeEventType.CALL_GROUP_ENCRYPTED, 3002, RADIO_2, mClock.get(),
+            TrafficChannelManager.NOT_ON_CONSOLE + " - PHASE 1 CHANNEL GRANT"));
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, 3003, RADIO_2, mClock.get(), "PHASE 1 CHANNEL GRANT"));
+
+        List<ConsoleActivityLogEntry> all = mRouter.getSnapshot().allTrafficLog();
+        assertEquals(4, all.size());
+        assertEquals(ConsoleActivityLogEntry.Status.NOT_ON_CONSOLE, all.get(0).status(), "Allocated, not on console");
+        assertEquals(ConsoleActivityLogEntry.Status.ENCRYPTED, all.get(1).status(), "Encrypted");
+        assertEquals(ConsoleActivityLogEntry.Status.IGNORED, all.get(2).status(), "Ignored (suffix)");
+        assertEquals(ConsoleActivityLogEntry.Status.IGNORED, all.get(3).status(), "Ignored (prefix)");
+        assertTrue(mRouter.getSnapshot().log().isEmpty(), "Expected no console log entries");
+    }
+
+    @Test
+    void allTrafficLogUpdatesCallInPlaceAndIsLimited()
+    {
+        long start = mClock.get();
+        DecodeEvent event = call(DecodeEventType.CALL_GROUP, TALKGROUP_OFF_CARD, null, start);
+        mRouter.receive(event);
+
+        //Repeated updates of the same call event update its entry rather than adding entries
+        for(int x = 1; x <= 5; x++)
+        {
+            advance(200);
+            event.update(start + x * 200L);
+            mRouter.receive(event);
+        }
+
+        event.setIdentifierCollection(new IdentifierCollection(List.of(APCO25Talkgroup.create(TALKGROUP_OFF_CARD),
+            APCO25RadioIdentifier.createFrom(RADIO_ALIASED), AliasListConfigurationIdentifier.create(ALIAS_LIST))));
+        mRouter.receive(event);
+
+        List<ConsoleActivityLogEntry> all = mRouter.getSnapshot().allTrafficLog();
+        assertEquals(1, all.size(), "Expected one entry for the call");
+        assertEquals("Pumper 12", all.getFirst().radioName(), "Expected the late talker in the entry");
+        assertEquals(SITE, all.getFirst().site(), "Expected the earlier site to be retained");
+
+        for(int x = 0; x < ConsoleActivityRouter.ALL_TRAFFIC_LOG_LIMIT + 10; x++)
+        {
+            advance(100);
+            mRouter.receive(call(DecodeEventType.CALL_GROUP, 5000 + x, RADIO_2, mClock.get()));
+        }
+
+        all = mRouter.getSnapshot().allTrafficLog();
+        assertEquals(ConsoleActivityRouter.ALL_TRAFFIC_LOG_LIMIT, all.size(), "Expected the all-traffic log limit");
+        assertEquals(String.valueOf(5000 + ConsoleActivityRouter.ALL_TRAFFIC_LOG_LIMIT + 9), all.getFirst().talkgroup(),
+            "Expected most recent entry first");
+    }
+
+    @Test
+    void encryptionIsLearnedFromCompletedCalls()
+    {
+        assertFalse(mManager.getCard(mFireDispatchCard.getId()).isEncryptedLearned());
+
+        //Three encrypted calls: each call is recorded when the next call on the card starts
+        for(int x = 0; x < ConsoleCard.ENCRYPTED_CALLS_TO_LEARN; x++)
+        {
+            advance(5000);
+            mRouter.receive(call(DecodeEventType.CALL_GROUP_ENCRYPTED, TALKGROUP_ON_CARD, RADIO_2, mClock.get()));
+        }
+
+        assertFalse(mManager.getCard(mFireDispatchCard.getId()).isEncryptedLearned(),
+            "Expected the third call to be recorded when it completes");
+
+        //The last call completes after the call complete time
+        advance(ConsoleActivityRouter.CALL_COMPLETE_MS + 1);
+        mRouter.getSnapshot();
+        ConsoleCard card = mManager.getCard(mFireDispatchCard.getId());
+        assertTrue(card.isEncryptedLearned(), "Expected the card to be learned as encrypted");
+        assertTrue(card.isTreatedAsEncrypted());
+
+        //A clear call (a slip) does not reset the learned state
+        advance(5000);
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_2, mClock.get()));
+        advance(ConsoleActivityRouter.CALL_COMPLETE_MS + 1);
+        mRouter.getSnapshot();
+        card = mManager.getCard(mFireDispatchCard.getId());
+        assertTrue(card.isEncryptedLearned(), "Expected a clear call not to reset the learned state");
+        assertEquals(1, card.getClearCallStreak());
+        assertEquals(0, card.getEncryptedCallStreak());
+
+        //Calls are recorded once, however many times they are updated
+        advance(5000);
+        DecodeEvent event = call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_2, mClock.get());
+
+        for(int x = 0; x < 5; x++)
+        {
+            event.update(mClock.get() + x * 100L);
+            mRouter.receive(event);
+        }
+
+        advance(ConsoleActivityRouter.CALL_COMPLETE_MS + 1);
+        mRouter.getSnapshot();
+        mRouter.getSnapshot();
+        assertEquals(2, mManager.getCard(mFireDispatchCard.getId()).getClearCallStreak(),
+            "Expected one recorded call per call event");
+
+        //Calls that are not on the console are not recorded on any card
+        mRouter.receive(call(DecodeEventType.CALL_GROUP_ENCRYPTED, TALKGROUP_OFF_CARD, RADIO_2, mClock.get()));
+        advance(ConsoleActivityRouter.CALL_COMPLETE_MS + 1);
+        mRouter.getSnapshot();
+        assertEquals(0, mManager.getCard(mFiregroundCard.getId()).getEncryptedCallStreak());
+    }
+
+    @Test
+    void clearAudioAlertFlagsCurrentCall()
+    {
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_2, mClock.get()));
+        mRouter.getClearAudioAlertListener().receive(mFireDispatchCard.getId());
+
+        ConsoleActivitySnapshot snapshot = mRouter.getSnapshot();
+        assertTrue(snapshot.getCard(mFireDispatchCard.getId()).clearAlert(), "Expected the card to show CLEAR");
+        assertFalse(snapshot.getCard(mFiregroundCard.getId()).clearAlert());
+        assertEquals(ConsoleActivityLogEntry.Status.CLEAR, snapshot.log().getFirst().status());
+        assertEquals(ConsoleActivityLogEntry.Status.CLEAR, snapshot.allTrafficLog().getFirst().status());
+
+        //Later updates of the call keep the CLEAR status
+        advance(500);
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_3, mClock.get()));
+        snapshot = mRouter.getSnapshot();
+        assertFalse(snapshot.getCard(mFireDispatchCard.getId()).clearAlert(), "Expected a new call to clear CLEAR");
+        assertEquals(ConsoleActivityLogEntry.Status.AUDIO, snapshot.log().get(0).status(), "New call");
+        assertEquals(ConsoleActivityLogEntry.Status.CLEAR, snapshot.log().get(1).status(), "Alerted call");
+
+        //The CLEAR state ends with the activity
+        mRouter.getClearAudioAlertListener().receive(mFireDispatchCard.getId());
+        assertTrue(mRouter.getSnapshot().getCard(mFireDispatchCard.getId()).clearAlert());
+        advance(CALL_TIMEOUT_MS + HANG_TIME_MS);
+        assertFalse(mRouter.getSnapshot().getCard(mFireDispatchCard.getId()).clearAlert(), "Expected CLEAR to end");
     }
 
     @Test

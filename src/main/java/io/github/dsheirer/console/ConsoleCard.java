@@ -18,9 +18,11 @@
  */
 package io.github.dsheirer.console;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -32,6 +34,12 @@ import java.util.UUID;
  * samples and because it maps directly to a slider position.  Mute is independent of volume so that un-muting
  * restores the previous volume.
  *
+ * Clear audio (encryption slip) alert: the card records whether its recent calls were encrypted (see recordCall()) and
+ * learns that its talkgroup is normally encrypted after ENCRYPTED_CALLS_TO_LEARN consecutive encrypted calls.  The
+ * learned state is only cleared after CLEAR_CALLS_TO_UNLEARN consecutive clear calls, so that a clear call (a slip)
+ * does not stop repeated slips from alerting.  The clear audio alert setting can override the learned state (always
+ * or never treated as encrypted).
+ *
  * The card also stores a fallback signature of the bound alias (alias list name, alias name and first talkgroup) so
  * that the card can be re-bound to its alias when the alias unique identifier is not found.
  *
@@ -39,12 +47,22 @@ import java.util.UUID;
  * ConsoleLayoutManager so that constraints are enforced and listeners are notified.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-@JsonPropertyOrder({"id", "aliasUuid", "signature", "volume", "muted", "pan"})
+@JsonPropertyOrder({"id", "aliasUuid", "signature", "volume", "muted", "pan", "clearAudioAlert", "encryptedLearned",
+    "encryptedCallStreak", "clearCallStreak"})
 public class ConsoleCard
 {
     public static final float MINIMUM_VOLUME = 0.0f;
     public static final float MAXIMUM_VOLUME = 1.0f;
     public static final float DEFAULT_VOLUME = MAXIMUM_VOLUME;
+    /**
+     * Number of consecutive encrypted calls after which the card's talkgroup is learned to be normally encrypted.
+     */
+    public static final int ENCRYPTED_CALLS_TO_LEARN = 3;
+    /**
+     * Number of consecutive clear calls after which a learned (normally encrypted) talkgroup is no longer treated as
+     * encrypted.
+     */
+    public static final int CLEAR_CALLS_TO_UNLEARN = 5;
 
     private String mId;
     private String mAliasUuid;
@@ -52,6 +70,10 @@ public class ConsoleCard
     private float mVolume = DEFAULT_VOLUME;
     private boolean mMuted;
     private AudioPan mPan = AudioPan.BOTH;
+    private ClearAudioAlert mClearAudioAlert = ClearAudioAlert.AUTO;
+    private boolean mEncryptedLearned;
+    private int mEncryptedCallStreak;
+    private int mClearCallStreak;
 
     /**
      * Constructs an instance.  Used by Jackson for deserialization.
@@ -82,7 +104,27 @@ public class ConsoleCard
         copy.setVolume(getVolume());
         copy.setMuted(isMuted());
         copy.setPan(getPan());
+        copy.setClearAudioAlert(getClearAudioAlert());
+        copy.setEncryptedLearned(isEncryptedLearned());
+        copy.setEncryptedCallStreak(getEncryptedCallStreak());
+        copy.setClearCallStreak(getClearCallStreak());
         return copy;
+    }
+
+    /**
+     * Indicates if this card has the same settings and state as the other card.
+     * @param other card to compare
+     * @return true if all values are equal.
+     */
+    public boolean hasSameState(ConsoleCard other)
+    {
+        return other != null && Objects.equals(getId(), other.getId()) &&
+            Objects.equals(getAliasUuid(), other.getAliasUuid()) &&
+            Objects.equals(getSignature(), other.getSignature()) && getVolume() == other.getVolume() &&
+            isMuted() == other.isMuted() && getPan() == other.getPan() &&
+            getClearAudioAlert() == other.getClearAudioAlert() && isEncryptedLearned() == other.isEncryptedLearned() &&
+            getEncryptedCallStreak() == other.getEncryptedCallStreak() &&
+            getClearCallStreak() == other.getClearCallStreak();
     }
 
     /**
@@ -195,10 +237,113 @@ public class ConsoleCard
         mPan = pan != null ? pan : AudioPan.BOTH;
     }
 
+    /**
+     * Clear audio (encryption slip) alert setting.
+     */
+    @JsonProperty("clearAudioAlert")
+    public ClearAudioAlert getClearAudioAlert()
+    {
+        return mClearAudioAlert;
+    }
+
+    /**
+     * Sets the clear audio alert setting.  A null value is replaced with the default (AUTO).
+     */
+    public void setClearAudioAlert(ClearAudioAlert clearAudioAlert)
+    {
+        mClearAudioAlert = clearAudioAlert != null ? clearAudioAlert : ClearAudioAlert.AUTO;
+    }
+
+    /**
+     * Indicates if the console has learned that this card's talkgroup is normally encrypted.
+     */
+    @JsonProperty("encryptedLearned")
+    public boolean isEncryptedLearned()
+    {
+        return mEncryptedLearned;
+    }
+
+    public void setEncryptedLearned(boolean encryptedLearned)
+    {
+        mEncryptedLearned = encryptedLearned;
+    }
+
+    /**
+     * Number of consecutive encrypted calls most recently received on this card (capped at ENCRYPTED_CALLS_TO_LEARN).
+     */
+    @JsonProperty("encryptedCallStreak")
+    public int getEncryptedCallStreak()
+    {
+        return mEncryptedCallStreak;
+    }
+
+    public void setEncryptedCallStreak(int encryptedCallStreak)
+    {
+        mEncryptedCallStreak = Math.clamp(encryptedCallStreak, 0, ENCRYPTED_CALLS_TO_LEARN);
+    }
+
+    /**
+     * Number of consecutive clear calls most recently received on this card (capped at CLEAR_CALLS_TO_UNLEARN).
+     */
+    @JsonProperty("clearCallStreak")
+    public int getClearCallStreak()
+    {
+        return mClearCallStreak;
+    }
+
+    public void setClearCallStreak(int clearCallStreak)
+    {
+        mClearCallStreak = Math.clamp(clearCallStreak, 0, CLEAR_CALLS_TO_UNLEARN);
+    }
+
+    /**
+     * Records a completed call on this card for learning whether the card's talkgroup is normally encrypted.
+     * @param encrypted true if the call was encrypted
+     */
+    public void recordCall(boolean encrypted)
+    {
+        if(encrypted)
+        {
+            setEncryptedCallStreak(getEncryptedCallStreak() + 1);
+            setClearCallStreak(0);
+
+            if(getEncryptedCallStreak() >= ENCRYPTED_CALLS_TO_LEARN)
+            {
+                setEncryptedLearned(true);
+            }
+        }
+        else
+        {
+            setClearCallStreak(getClearCallStreak() + 1);
+            setEncryptedCallStreak(0);
+
+            if(getClearCallStreak() >= CLEAR_CALLS_TO_UNLEARN)
+            {
+                setEncryptedLearned(false);
+            }
+        }
+    }
+
+    /**
+     * Indicates if the card's talkgroup is treated as normally encrypted, so that clear audio raises an alert: always
+     * when the clear audio alert setting is ALWAYS, never when it is NEVER, otherwise when learned.
+     */
+    @JsonIgnore
+    public boolean isTreatedAsEncrypted()
+    {
+        return switch(getClearAudioAlert())
+        {
+            case ALWAYS -> true;
+            case NEVER -> false;
+            default -> isEncryptedLearned();
+        };
+    }
+
     @Override
     public String toString()
     {
         return "Console Card [" + getId() + "] alias [" + getAliasUuid() + "] signature [" + getSignature() +
-            "] volume [" + getVolume() + "] muted [" + isMuted() + "] pan [" + getPan() + "]";
+            "] volume [" + getVolume() + "] muted [" + isMuted() + "] pan [" + getPan() + "] clear audio alert [" +
+            getClearAudioAlert() + "] encrypted learned [" + isEncryptedLearned() + "]";
     }
 }

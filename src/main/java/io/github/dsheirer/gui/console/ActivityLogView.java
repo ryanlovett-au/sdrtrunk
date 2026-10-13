@@ -23,34 +23,55 @@ import io.github.dsheirer.console.activity.ConsoleActivitySnapshot;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.ToIntFunction;
 import javafx.beans.property.ReadOnlyStringWrapper;
+import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.Label;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
+import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TitledPane;
+import javafx.scene.control.ToggleButton;
+import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.HBox;
 
 /**
- * Collapsible console activity log: the most recent calls routed to console cards (time, talkgroup, radio, site and
- * audio status).  Invoke all methods on the JavaFX thread.
+ * Collapsible console activity log: the most recent calls (time, talkgroup, radio, site and audio status).
+ *
+ * The title bar has a segmented toggle to show either the calls routed to console cards ("Console only") or all voice
+ * calls ("All traffic"), including calls that are not on the console, which are de-emphasised (grey text, with the
+ * IGNORED status in amber).  Invoke all methods on the JavaFX thread.
  */
 public class ActivityLogView extends TitledPane
 {
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss")
         .withZone(ZoneId.systemDefault());
-    private static final String[] STATUS_STYLE_CLASSES = {"status-audio", "status-muted", "status-encrypted"};
+    private static final String[] STATUS_STYLE_CLASSES = {"status-audio", "status-muted", "status-encrypted",
+        "status-clear", "status-ignored", "status-not-on-console"};
+    private static final String OFF_CONSOLE_STYLE_CLASS = "off-console";
 
     private final TableView<ConsoleActivityLogEntry> mTableView = new TableView<>();
     private final ToIntFunction<String> mInkColorLookup;
+    private final ToggleGroup mModeToggleGroup = new ToggleGroup();
+    private final ToggleButton mConsoleOnlyButton = new ToggleButton("Console only");
+    private final ToggleButton mAllTrafficButton = new ToggleButton("All traffic");
+    private final Label mConsolePlaceholder = new Label("No console activity");
+    private final Label mAllTrafficPlaceholder = new Label("No traffic");
+    private ConsoleActivitySnapshot mSnapshot;
     private long mLogVersion = -1;
+    private boolean mShowAll;
 
     /**
      * Constructs an instance
      * @param inkColorLookup provides the ink (text) RGB colour for a card identifier, or -1 for the default colour
+     * @param showAllListener notified when the user changes the log mode (true for all traffic)
      */
-    public ActivityLogView(ToIntFunction<String> inkColorLookup)
+    public ActivityLogView(ToIntFunction<String> inkColorLookup, Consumer<Boolean> showAllListener)
     {
         mInkColorLookup = inkColorLookup;
         setText("ACTIVITY LOG");
@@ -58,11 +79,54 @@ public class ActivityLogView extends TitledPane
         setAnimated(false);
         setExpanded(true);
 
+        //Segmented log mode toggle in the title bar
+        mConsoleOnlyButton.setUserData(Boolean.FALSE);
+        mAllTrafficButton.setUserData(Boolean.TRUE);
+        mConsoleOnlyButton.getStyleClass().addAll("log-mode-button", "first");
+        mAllTrafficButton.getStyleClass().addAll("log-mode-button", "last");
+        mConsoleOnlyButton.setTooltip(new Tooltip("Show only calls on console talkgroup cards"));
+        mAllTrafficButton.setTooltip(new Tooltip("Also show calls that are not on the console (ignored, not on the " +
+            "console, or encrypted)"));
+        mConsoleOnlyButton.setToggleGroup(mModeToggleGroup);
+        mAllTrafficButton.setToggleGroup(mModeToggleGroup);
+        mConsoleOnlyButton.setSelected(true);
+        mModeToggleGroup.selectedToggleProperty().addListener((observable, oldValue, newValue) -> {
+            if(newValue == null)
+            {
+                //Always keep one mode selected
+                mModeToggleGroup.selectToggle(oldValue);
+                return;
+            }
+
+            boolean showAll = Boolean.TRUE.equals(newValue.getUserData());
+
+            if(showAll != mShowAll)
+            {
+                mShowAll = showAll;
+                updateItems();
+
+                if(showAllListener != null)
+                {
+                    showAllListener.accept(showAll);
+                }
+            }
+        });
+
+        HBox modeToggle = new HBox(mConsoleOnlyButton, mAllTrafficButton);
+        modeToggle.getStyleClass().add("log-mode-toggle");
+        //Keep clicks on the toggle from also expanding or collapsing the log
+        modeToggle.addEventHandler(MouseEvent.MOUSE_RELEASED, MouseEvent::consume);
+        modeToggle.addEventHandler(MouseEvent.MOUSE_CLICKED, MouseEvent::consume);
+        setGraphic(modeToggle);
+        setContentDisplay(ContentDisplay.RIGHT);
+        setGraphicTextGap(16);
+
         mTableView.getStyleClass().add("activity-table");
         mTableView.setPrefHeight(280);
         mTableView.setMinHeight(80);
         mTableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-        mTableView.setPlaceholder(new Label("No console activity"));
+        mTableView.setPlaceholder(mConsolePlaceholder);
+        mTableView.setRowFactory(table -> new LogRow());
 
         TableColumn<ConsoleActivityLogEntry,String> time = column("Time", 90,
             entry -> TIME_FORMATTER.format(Instant.ofEpochMilli(entry.timestamp())));
@@ -125,10 +189,47 @@ public class ActivityLogView extends TitledPane
      */
     public void update(ConsoleActivitySnapshot snapshot)
     {
+        mSnapshot = snapshot;
+
         if(snapshot.logVersion() != mLogVersion)
         {
             mLogVersion = snapshot.logVersion();
-            mTableView.getItems().setAll(snapshot.log());
+            updateItems();
+        }
+    }
+
+    /**
+     * Indicates if the log shows all traffic (true) or only calls on console cards (false).
+     */
+    public boolean isShowAll()
+    {
+        return mShowAll;
+    }
+
+    /**
+     * Sets the log mode without notifying the show all listener.
+     * @param showAll true to show all traffic, false to show only calls on console cards
+     */
+    public void setShowAll(boolean showAll)
+    {
+        if(showAll != mShowAll)
+        {
+            mShowAll = showAll;
+            (showAll ? mAllTrafficButton : mConsoleOnlyButton).setSelected(true);
+            updateItems();
+        }
+    }
+
+    /**
+     * Shows the log entries for the current mode from the latest snapshot.
+     */
+    private void updateItems()
+    {
+        mTableView.setPlaceholder(mShowAll ? mAllTrafficPlaceholder : mConsolePlaceholder);
+
+        if(mSnapshot != null)
+        {
+            mTableView.getItems().setAll(mShowAll ? mSnapshot.allTrafficLog() : mSnapshot.log());
         }
     }
 
@@ -163,7 +264,8 @@ public class ActivityLogView extends TitledPane
             }
 
             setText(item);
-            int ink = mInkColorLookup.applyAsInt(getTableRow().getItem().cardId());
+            ConsoleActivityLogEntry entry = getTableRow().getItem();
+            int ink = entry.isOnConsole() ? mInkColorLookup.applyAsInt(entry.cardId()) : -1;
             setStyle(ink >= 0 ? "-fx-text-fill: " + ConsoleCardColors.toHex(ink) + ";" : null);
         }
     }
@@ -194,7 +296,28 @@ public class ActivityLogView extends TitledPane
                     case AUDIO -> "status-audio";
                     case MUTED -> "status-muted";
                     case ENCRYPTED -> "status-encrypted";
+                    case CLEAR -> "status-clear";
+                    case IGNORED -> "status-ignored";
+                    case NOT_ON_CONSOLE -> "status-not-on-console";
                 });
+            }
+        }
+    }
+
+    /**
+     * Table row that is de-emphasised (style class off-console) for calls that are not on the console.
+     */
+    private static class LogRow extends TableRow<ConsoleActivityLogEntry>
+    {
+        @Override
+        protected void updateItem(ConsoleActivityLogEntry item, boolean empty)
+        {
+            super.updateItem(item, empty);
+            getStyleClass().remove(OFF_CONSOLE_STYLE_CLASS);
+
+            if(!empty && item != null && !item.isOnConsole())
+            {
+                getStyleClass().add(OFF_CONSOLE_STYLE_CLASS);
             }
         }
     }

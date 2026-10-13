@@ -70,7 +70,6 @@ import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.TimeStamp;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
 import java.awt.AWTException;
-import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.EventQueue;
 import java.awt.GraphicsEnvironment;
@@ -81,7 +80,6 @@ import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -244,6 +242,7 @@ public class SDRTrunk implements Listener<TunerEvent>
             mPlaylistManager.getConsoleCardResolver(), aliasModel);
         mPlaylistManager.getChannelProcessingManager().addDecodeEventListener(mConsoleActivityRouter);
         mConsoleAudioMixer.addLevelListener(mConsoleActivityRouter.getLevelListener());
+        mConsoleAudioMixer.addClearAudioAlertListener(mConsoleActivityRouter.getClearAudioAlertListener());
 
         if(mJavaFxWindowManager != null)
         {
@@ -516,64 +515,20 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         JMenuItem viewApplicationLogsMenu = new JMenuItem("Application Log Files");
         viewApplicationLogsMenu.setIcon(new ThemedFontIcon(FontAwesome.FOLDER_OPEN_O, 12));
-        viewApplicationLogsMenu.addActionListener(arg0 -> {
-            File logsDirectory = mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog().toFile();
-            try
-            {
-                Desktop.getDesktop().open(logsDirectory);
-            }
-            catch(Exception e)
-            {
-                mLog.error("Couldn't open file explorer");
-
-                JOptionPane.showMessageDialog(mMainGui,
-                        "Can't launch file explorer - files are located at: " + logsDirectory,
-                        "Can't launch file explorer",
-                        JOptionPane.ERROR_MESSAGE);
-            }
-        });
+        viewApplicationLogsMenu.addActionListener(arg0 -> DirectoryOpener.open(
+            mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog().toFile(), mMainGui));
         viewMenu.add(viewApplicationLogsMenu);
 
         JMenuItem viewRecordingsMenuItem = new JMenuItem("Audio Recordings");
         viewRecordingsMenuItem.setIcon(new ThemedFontIcon(FontAwesome.FOLDER_OPEN_O, 12));
-        viewRecordingsMenuItem.addActionListener(arg0 -> {
-            File recordingsDirectory = mUserPreferences.getDirectoryPreference().getDirectoryRecording().toFile();
-
-            try
-            {
-                Desktop.getDesktop().open(recordingsDirectory);
-            }
-            catch(Exception e)
-            {
-                mLog.error("Couldn't open file explorer");
-
-                JOptionPane.showMessageDialog(mMainGui,
-                        "Can't launch file explorer - files are located at: " +
-                                recordingsDirectory,
-                        "Can't launch file explorer",
-                        JOptionPane.ERROR_MESSAGE);
-            }
-        });
+        viewRecordingsMenuItem.addActionListener(arg0 -> DirectoryOpener.open(
+            mUserPreferences.getDirectoryPreference().getDirectoryRecording().toFile(), mMainGui));
         viewMenu.add(viewRecordingsMenuItem);
 
         JMenuItem viewEventLogsMenu = new JMenuItem("Channel Event Log Files");
         viewEventLogsMenu.setIcon(new ThemedFontIcon(FontAwesome.FOLDER_OPEN_O, 12));
-        viewEventLogsMenu.addActionListener(arg0 -> {
-            File eventLogsDirectory = mUserPreferences.getDirectoryPreference().getDirectoryEventLog().toFile();
-            try
-            {
-                Desktop.getDesktop().open(eventLogsDirectory);
-            }
-            catch(Exception e)
-            {
-                mLog.error("Couldn't open file explorer");
-
-                JOptionPane.showMessageDialog(mMainGui,
-                        "Can't launch file explorer - files are located at: " + eventLogsDirectory,
-                        "Can't launch file explorer",
-                        JOptionPane.ERROR_MESSAGE);
-            }
-        });
+        viewEventLogsMenu.addActionListener(arg0 -> DirectoryOpener.open(
+            mUserPreferences.getDirectoryPreference().getDirectoryEventLog().toFile(), mMainGui));
         viewMenu.add(viewEventLogsMenu);
 
         JMenuItem iconManagerMenu = new JMenuItem("Icon Manager");
@@ -588,22 +543,8 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         JMenuItem viewScreenCapturesMenu = new JMenuItem("Screen Captures");
         viewScreenCapturesMenu.setIcon(new ThemedFontIcon(FontAwesome.FOLDER_OPEN_O, 12));
-        viewScreenCapturesMenu.addActionListener(arg0 -> {
-            File screenCapturesDirectory = mUserPreferences.getDirectoryPreference().getDirectoryScreenCapture().toFile();
-            try
-            {
-                Desktop.getDesktop().open(screenCapturesDirectory);
-            }
-            catch(Exception e)
-            {
-                mLog.error("Couldn't open file explorer");
-
-                JOptionPane.showMessageDialog(mMainGui,
-                        "Can't launch file explorer - files are located at: " + screenCapturesDirectory,
-                        "Can't launch file explorer",
-                        JOptionPane.ERROR_MESSAGE);
-            }
-        });
+        viewScreenCapturesMenu.addActionListener(arg0 -> DirectoryOpener.open(
+            mUserPreferences.getDirectoryPreference().getDirectoryScreenCapture().toFile(), mMainGui));
         viewMenu.add(viewScreenCapturesMenu);
 
         JMenuItem preferencesItem = new JMenuItem("User Preferences");

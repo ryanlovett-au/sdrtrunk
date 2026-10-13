@@ -24,6 +24,7 @@ import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.AudioSegment;
 import io.github.dsheirer.console.AudioPan;
+import io.github.dsheirer.console.ClearAudioAlert;
 import io.github.dsheirer.console.ConsoleCard;
 import io.github.dsheirer.console.ConsoleCardResolver;
 import io.github.dsheirer.console.ConsoleGroup;
@@ -475,6 +476,122 @@ public class ConsoleAudioEngineTest
         frame();
         frame();
         assertEquals(count, mLevels.size(), "Expected no snapshots while idle");
+    }
+
+    /**
+     * Plays a clear call on the card and returns the card identifiers of the alerts raised.
+     */
+    private List<String> playClearCall(int frames)
+    {
+        List<String> alerts = new ArrayList<>();
+        mEngine.setClearAudioAlertListener(alerts::add);
+        CountingAudioSegment segment = segment(CARD_TALKGROUP);
+        addAudio(segment, 40);
+        mEngine.receive(segment);
+
+        for(int x = 0; x < frames; x++)
+        {
+            frame();
+        }
+
+        return alerts;
+    }
+
+    @Test
+    void clearAudioOnEncryptedCardAlertsOnceOnCardSideEvenWhenMuted()
+    {
+        mConsoleLayoutManager.setCardClearAudioAlert(mCard.getId(), ClearAudioAlert.ALWAYS);
+        mConsoleLayoutManager.setCardPan(mCard.getId(), AudioPan.RIGHT);
+        mConsoleLayoutManager.setCardMuted(mCard.getId(), true);
+        List<String> alerts = new ArrayList<>();
+        mEngine.setClearAudioAlertListener(alerts::add);
+        CountingAudioSegment segment = segment(CARD_TALKGROUP);
+        addAudio(segment, 40);
+        mEngine.receive(segment);
+
+        frame();
+        assertEquals(List.of(mCard.getId()), alerts, "Expected one alert for the card");
+        assertEquals(1, mEngine.getAlertCount(), "Expected the alert tone to be playing");
+        assertTrue(peak(mRight) > 0.1f, "Expected the alert tone on the card's (right) side while muted");
+        assertEquals(0.0f, peak(mLeft), 0.0f, "Expected nothing on the left side");
+
+        //The tone completes and the call (muted) continues without another alert
+        int toneFrames = (AlertTone.getClearAudioAlert().length + FRAME - 1) / FRAME;
+
+        for(int x = 1; x < toneFrames; x++)
+        {
+            frame();
+        }
+
+        assertEquals(0, mEngine.getAlertCount(), "Expected the alert tone to be complete");
+        frame();
+        assertTrue(isSilent(), "Expected silence after the tone while the card is muted");
+        assertEquals(1, alerts.size(), "Expected a single alert per call");
+
+        //A linked continuation of the same call does not alert again
+        CountingAudioSegment continuation = segment(CARD_TALKGROUP);
+        continuation.linkTo(segment);
+        segment.completeProperty().set(true);
+        addAudio(continuation, 20);
+        mEngine.receive(continuation);
+
+        for(int x = 0; x < 30; x++)
+        {
+            frame();
+        }
+
+        assertEquals(1, alerts.size(), "Expected no alert for the linked continuation");
+        mEngine.releaseAll();
+    }
+
+    @Test
+    void clearAudioAlertFollowsLearnedEncryption()
+    {
+        //Not learned yet: no alert
+        assertTrue(playClearCall(3).isEmpty(), "Expected no alert before the talkgroup is learned as encrypted");
+        mEngine.releaseAll();
+
+        //Learned after three consecutive encrypted calls
+        for(int x = 0; x < ConsoleCard.ENCRYPTED_CALLS_TO_LEARN; x++)
+        {
+            mConsoleLayoutManager.recordCardCall(mCard.getId(), true);
+        }
+
+        assertEquals(List.of(mCard.getId()), playClearCall(3), "Expected an alert for a learned encrypted card");
+        mEngine.releaseAll();
+
+        //The NEVER override suppresses the alert
+        mConsoleLayoutManager.setCardClearAudioAlert(mCard.getId(), ClearAudioAlert.NEVER);
+        assertTrue(playClearCall(3).isEmpty(), "Expected no alert with the NEVER override");
+        mEngine.releaseAll();
+    }
+
+    @Test
+    void clearAudioAlertDisabledGlobally()
+    {
+        mConsoleLayoutManager.setCardClearAudioAlert(mCard.getId(), ClearAudioAlert.ALWAYS);
+        mEngine.setClearAudioAlertEnabled(false);
+        List<String> alerts = playClearCall(3);
+        assertTrue(alerts.isEmpty(), "Expected no alert when the clear audio alert is disabled");
+        assertEquals(0, mEngine.getAlertCount(), "Expected no alert tone");
+        assertEquals(LEVEL, peak(mLeft), 1e-6f, "Expected only the call audio");
+        mEngine.releaseAll();
+    }
+
+    @Test
+    void encryptedAudioDoesNotAlert()
+    {
+        mConsoleLayoutManager.setCardClearAudioAlert(mCard.getId(), ClearAudioAlert.ALWAYS);
+        List<String> alerts = new ArrayList<>();
+        mEngine.setClearAudioAlertListener(alerts::add);
+        CountingAudioSegment encrypted = segment(CARD_TALKGROUP);
+        encrypted.encryptedProperty().set(true);
+        addAudio(encrypted, 20);
+        mEngine.receive(encrypted);
+        frame();
+        frame();
+        assertTrue(alerts.isEmpty(), "Expected no alert for encrypted audio");
+        assertTrue(isSilent(), "Expected silence");
     }
 
     /**

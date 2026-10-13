@@ -36,6 +36,7 @@ import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
+import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -45,6 +46,7 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.LongSupplier;
 import org.slf4j.Logger;
@@ -56,7 +58,22 @@ import org.slf4j.LoggerFactory;
  *
  * Registered with the ChannelProcessingManager as a decode event listener.  For each voice call event, the call's alias
  * list (from the alias list configuration identifier) and TO identifier are resolved to a console card via the
- * ConsoleCardResolver.  Events that do not resolve to a card are ignored.
+ * ConsoleCardResolver.
+ *
+ * Activity logs: calls that resolve to a card are logged in the console activity log (ACTIVITY_LOG_LIMIT entries).
+ * The all-traffic log (ALL_TRAFFIC_LOG_LIMIT entries) contains those calls plus the voice calls that do not resolve to a
+ * card, with the status IGNORED when the traffic channel manager did not allocate a traffic channel for the call (the
+ * event details carry TrafficChannelManager.NOT_ON_CONSOLE), ENCRYPTED for an encrypted call, or NOT_ON_CONSOLE
+ * otherwise (decoded, e.g. with the talkgroup filter off or on a conventional channel, but not on a card).  Both logs
+ * have one entry per call event, which is updated in place as the call progresses.
+ *
+ * Encryption learning: each call on a card is recorded once with ConsoleLayoutManager.recordCardCall() (encrypted if
+ * the call was flagged as encrypted at any time) when the call completes: when the card's next call starts, or
+ * CALL_COMPLETE_MS after the call's last update.  Recording is done outside of this router's lock.
+ *
+ * Clear audio alerts: the console mixer reports clear audio on a card that is treated as normally encrypted
+ * (getClearAudioAlertListener()).  The card's current call is flagged: the card activity reports clearAlert while that
+ * call is active or hanging, and the call's log entries show the CLEAR status.
  *
  * Call progress: decoders and traffic channel managers broadcast the same (mutable) call event object repeatedly
  * while the call is in progress, each time with a later end timestamp, and there is no explicit 'call ended' flag on
@@ -99,6 +116,14 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
      */
     public static final int ACTIVITY_LOG_LIMIT = 50;
     /**
+     * Maximum number of all-traffic log entries retained.
+     */
+    public static final int ALL_TRAFFIC_LOG_LIMIT = 200;
+    /**
+     * Time after the last update of a call event after which the call is considered complete for encryption learning.
+     */
+    public static final long CALL_COMPLETE_MS = 5000;
+    /**
      * Separator between the site name and the decoded site identifier, e.g. "North Hill · 1-3".
      */
     public static final String SITE_SEPARATOR = " · ";
@@ -123,9 +148,14 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     private final long mCallUpdateTimeoutMs;
     private final Listener<ConsoleLayoutEvent> mLayoutListener = this::layoutChanged;
     private final Listener<ConsoleAudioLevels> mLevelListener = this::receiveLevels;
+    private final Listener<String> mClearAudioAlertListener = this::receiveClearAudioAlert;
     private final Map<IDecodeEvent,CallTrack> mCalls = new IdentityHashMap<>();
     private final Map<String,CardTrack> mCards = new HashMap<>();
     private final List<ConsoleActivityLogEntry> mActivityLog = new ArrayList<>();
+    private final List<ConsoleActivityLogEntry> mAllTrafficLog = new ArrayList<>();
+    private List<ConsoleActivityLogEntry> mActivityLogCopy = List.of();
+    private List<ConsoleActivityLogEntry> mAllTrafficLogCopy = List.of();
+    private long mLogCopyVersion;
     private long mLogSequence;
     private long mLogVersion;
     private volatile long mHangTimeMs;
@@ -194,6 +224,15 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     }
 
     /**
+     * Listener to register with the console audio mixer (ConsoleAudioMixer.addClearAudioAlertListener()) to receive
+     * the card identifier of each clear audio (encryption slip) alert.
+     */
+    public Listener<String> getClearAudioAlertListener()
+    {
+        return mClearAudioAlertListener;
+    }
+
+    /**
      * Indicates if the event type is a call event type that is routed to console cards.
      */
     public static boolean isRoutedEventType(DecodeEventType type)
@@ -219,7 +258,18 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     }
 
     /**
-     * Processes a decode event.  Voice call events that resolve to a console card update the card's activity.
+     * Indicates if the call event was ignored by a traffic channel manager (no traffic channel allocated) because the
+     * call is not on the console: the event details carry the TrafficChannelManager.NOT_ON_CONSOLE indicator.
+     */
+    public static boolean isIgnoredByTrafficChannelManager(IDecodeEvent event)
+    {
+        String details = event.getDetails();
+        return details != null && details.contains(TrafficChannelManager.NOT_ON_CONSOLE);
+    }
+
+    /**
+     * Processes a decode event.  Voice call events that resolve to a console card update the card's activity and both
+     * activity logs.  Other voice call events are logged in the all-traffic log.
      */
     @Override
     public void receive(IDecodeEvent event)
@@ -239,23 +289,18 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
             }
 
             Identifier to = identifierCollection.getToIdentifier();
+
+            if(to == null)
+            {
+                return;
+            }
+
             AliasList aliasList = mAliasModel.getAliasList(identifierCollection);
-
-            if(to == null || aliasList == null)
-            {
-                return;
-            }
-
-            ConsoleCard card = mConsoleCardResolver.getCard(aliasList, to);
-
-            if(card == null)
-            {
-                return;
-            }
-
+            ConsoleCard card = aliasList != null ? mConsoleCardResolver.getCard(aliasList, to) : null;
             CallDetails details = getCallDetails(event, identifierCollection, aliasList, to, card,
                 mDecodedSiteResolver);
-            update(event, card, details);
+            List<CompletedCall> completed = update(event, card, details);
+            recordCompletedCalls(completed);
         }
         catch(Exception e)
         {
@@ -264,7 +309,20 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     }
 
     /**
-     * Extracts the call details (talker, site, talkgroup and card alias name) from the event.
+     * Records completed calls for encryption learning.  Invoked without holding this router's lock.
+     */
+    private void recordCompletedCalls(List<CompletedCall> completed)
+    {
+        for(CompletedCall call: completed)
+        {
+            mConsoleLayoutManager.recordCardCall(call.cardId(), call.encrypted());
+        }
+    }
+
+    /**
+     * Extracts the call details (talker, site, talkgroup and talkgroup display name) from the event.
+     * @param aliasList for the call, or null
+     * @param card for the call, or null when the call is not on the console
      */
     private static CallDetails getCallDetails(IDecodeEvent event, IdentifierCollection identifierCollection,
                                               AliasList aliasList, Identifier to, ConsoleCard card,
@@ -283,7 +341,7 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
             else
             {
                 talkerId = from.toString();
-                talkerName = getAliasName(aliasList.getAliases(from), null);
+                talkerName = aliasList != null ? getAliasName(aliasList.getAliases(from), null) : null;
             }
         }
 
@@ -297,15 +355,29 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
             }
         }
 
-        String cardAliasName = getAliasName(aliasList.getAliases(to), card.getAliasUuid());
+        String talkgroupName;
 
-        if(cardAliasName == null && card.getSignature() != null)
+        if(card != null)
         {
-            cardAliasName = card.getSignature().getAliasName();
+            talkgroupName = aliasList != null ? getAliasName(aliasList.getAliases(to), card.getAliasUuid()) : null;
+
+            if(talkgroupName == null && card.getSignature() != null)
+            {
+                talkgroupName = card.getSignature().getAliasName();
+            }
+        }
+        else
+        {
+            talkgroupName = aliasList != null ? getAliasName(aliasList.getAliases(to), null) : null;
+
+            if(talkgroupName == null)
+            {
+                talkgroupName = to.toString();
+            }
         }
 
         return new CallDetails(talkerId, talkerName, getSite(identifierCollection, decodedSiteResolver), to.toString(),
-            cardAliasName, isEncrypted(event));
+            talkgroupName, isEncrypted(event), isIgnoredByTrafficChannelManager(event));
     }
 
     /**
@@ -414,19 +486,30 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     }
 
     /**
-     * Updates the call and card state for the call event.
+     * Updates the call and card state and the activity logs for the call event.
+     * @param event call event
+     * @param card for the call, or null when the call is not on the console
+     * @param details of the call
+     * @return calls that completed, for encryption learning
      */
-    private synchronized void update(IDecodeEvent event, ConsoleCard card, CallDetails details)
+    private synchronized List<CompletedCall> update(IDecodeEvent event, ConsoleCard card, CallDetails details)
     {
         long now = mClock.getAsLong();
-        purgeCalls(now);
+        List<CompletedCall> completed = new ArrayList<>();
+        purgeCalls(now, completed);
 
+        String cardId = card != null ? card.getId() : null;
         CallTrack call = mCalls.get(event);
         boolean progress;
 
-        if(call == null || !call.mCardId.equals(card.getId()))
+        if(call == null || !Objects.equals(call.mCardId, cardId))
         {
-            call = new CallTrack(card.getId());
+            if(call != null)
+            {
+                completeCall(call, completed);
+            }
+
+            call = new CallTrack(cardId);
             mCalls.put(event, call);
             progress = true;
         }
@@ -437,12 +520,34 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
 
         call.mLastEventEnd = Math.max(call.mLastEventEnd, event.getTimeEnd());
         call.mLastUpdate = now;
+        call.mEncrypted |= details.encrypted();
 
+        if(card != null)
+        {
+            updateCard(call, card, details, progress, now, completed);
+        }
+
+        updateLog(call, card, details, now);
+        return completed;
+    }
+
+    /**
+     * Updates the card state for the call.  Lock must be held.
+     */
+    private void updateCard(CallTrack call, ConsoleCard card, CallDetails details, boolean progress, long now,
+                            List<CompletedCall> completed)
+    {
         CardTrack cardTrack = mCards.computeIfAbsent(card.getId(), id -> new CardTrack());
 
         if(progress)
         {
             cardTrack.mLastCallProgress = now;
+
+            //A new call on the card completes the card's previous call
+            if(cardTrack.mCurrentCall != null && cardTrack.mCurrentCall != call)
+            {
+                completeCall(cardTrack.mCurrentCall, completed);
+            }
         }
 
         //Only update the card's current call details from the card's most recently progressing call, so that a late
@@ -465,62 +570,145 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
         {
             cardTrack.addRecentTalker(new RecentTalker(details.talkerId(), details.talkerName(), now));
         }
-
-        updateLog(call, card, details, now);
     }
 
     /**
-     * Creates or updates the activity log entry for the call.
+     * Marks the call as complete and adds it to the completed calls for encryption learning, once per call.  Calls
+     * that are not on the console are not recorded.  Lock must be held.
+     */
+    private static void completeCall(CallTrack call, List<CompletedCall> completed)
+    {
+        if(!call.mCompleted)
+        {
+            call.mCompleted = true;
+
+            if(call.mCardId != null)
+            {
+                completed.add(new CompletedCall(call.mCardId, call.mEncrypted));
+            }
+        }
+    }
+
+    /**
+     * Log status for the call.
+     */
+    private static ConsoleActivityLogEntry.Status getStatus(CallTrack call, ConsoleCard card, CallDetails details)
+    {
+        if(card != null)
+        {
+            if(call.mClearAlert)
+            {
+                return ConsoleActivityLogEntry.Status.CLEAR;
+            }
+
+            if(details.encrypted())
+            {
+                return ConsoleActivityLogEntry.Status.ENCRYPTED;
+            }
+
+            return card.isMuted() ? ConsoleActivityLogEntry.Status.MUTED : ConsoleActivityLogEntry.Status.AUDIO;
+        }
+
+        if(details.encrypted())
+        {
+            return ConsoleActivityLogEntry.Status.ENCRYPTED;
+        }
+
+        return details.ignored() ? ConsoleActivityLogEntry.Status.IGNORED :
+            ConsoleActivityLogEntry.Status.NOT_ON_CONSOLE;
+    }
+
+    /**
+     * Creates or updates the activity log entries for the call: the console activity log (calls on a card) and the
+     * all-traffic log (all calls).  Lock must be held.
      */
     private void updateLog(CallTrack call, ConsoleCard card, CallDetails details, long now)
     {
-        ConsoleActivityLogEntry.Status status = details.encrypted() ? ConsoleActivityLogEntry.Status.ENCRYPTED :
-            (card.isMuted() ? ConsoleActivityLogEntry.Status.MUTED : ConsoleActivityLogEntry.Status.AUDIO);
+        ConsoleActivityLogEntry.Status status = getStatus(call, card, details);
 
         if(call.mLogEntry == null)
         {
-            call.mLogEntry = new ConsoleActivityLogEntry(++mLogSequence, now, card.getId(), details.cardAliasName(),
+            call.mLogEntry = new ConsoleActivityLogEntry(++mLogSequence, now, call.mCardId, details.talkgroupName(),
                 details.talkgroup(), details.talkerName(), details.talkerId(), details.site(), status);
-            mActivityLog.addFirst(call.mLogEntry);
 
-            while(mActivityLog.size() > ACTIVITY_LOG_LIMIT)
+            if(call.mLogEntry.isOnConsole())
             {
-                mActivityLog.removeLast();
+                addLogEntry(mActivityLog, call.mLogEntry, ACTIVITY_LOG_LIMIT);
             }
 
+            addLogEntry(mAllTrafficLog, call.mLogEntry, ALL_TRAFFIC_LOG_LIMIT);
             mLogVersion++;
             return;
         }
 
         ConsoleActivityLogEntry previous = call.mLogEntry;
-        ConsoleActivityLogEntry updated = new ConsoleActivityLogEntry(previous.id(), previous.timestamp(),
-            previous.cardId(), details.cardAliasName() != null ? details.cardAliasName() : previous.talkgroupName(),
-            details.talkgroup(),
+        replaceLogEntry(call, new ConsoleActivityLogEntry(previous.id(), previous.timestamp(), previous.cardId(),
+            details.talkgroupName() != null ? details.talkgroupName() : previous.talkgroupName(), details.talkgroup(),
             details.talkerName() != null ? details.talkerName() : previous.radioName(),
             details.talkerId() != null ? details.talkerId() : previous.radioId(),
-            details.site() != null ? details.site() : previous.site(), status);
+            details.site() != null ? details.site() : previous.site(), status));
+    }
 
-        if(!updated.equals(previous))
+    /**
+     * Replaces the call's log entry in both activity logs when the entry changed.  Lock must be held.
+     */
+    private void replaceLogEntry(CallTrack call, ConsoleActivityLogEntry updated)
+    {
+        ConsoleActivityLogEntry previous = call.mLogEntry;
+
+        if(previous == null || updated.equals(previous))
         {
-            call.mLogEntry = updated;
-            int index = indexOfLogEntry(previous.id());
-
-            if(index >= 0)
-            {
-                mActivityLog.set(index, updated);
-                mLogVersion++;
-            }
+            return;
         }
+
+        call.mLogEntry = updated;
+        boolean replaced = replaceLogEntry(mActivityLog, updated);
+        replaced |= replaceLogEntry(mAllTrafficLog, updated);
+
+        if(replaced)
+        {
+            mLogVersion++;
+        }
+    }
+
+    /**
+     * Adds the entry at the start of the log, removing the oldest entries beyond the limit.
+     */
+    private static void addLogEntry(List<ConsoleActivityLogEntry> log, ConsoleActivityLogEntry entry, int limit)
+    {
+        log.addFirst(entry);
+
+        while(log.size() > limit)
+        {
+            log.removeLast();
+        }
+    }
+
+    /**
+     * Replaces the log entry that has the same identifier as the updated entry.
+     * @return true if the entry was found and replaced.
+     */
+    private static boolean replaceLogEntry(List<ConsoleActivityLogEntry> log, ConsoleActivityLogEntry updated)
+    {
+        int index = indexOfLogEntry(log, updated.id());
+
+        if(index >= 0)
+        {
+            log.set(index, updated);
+            return true;
+        }
+
+        return false;
     }
 
     /**
      * Index of the log entry with the specified identifier, or -1.
      */
-    private int indexOfLogEntry(long id)
+    private static int indexOfLogEntry(List<ConsoleActivityLogEntry> log, long id)
     {
-        for(int x = 0; x < mActivityLog.size(); x++)
+        for(int x = 0; x < log.size(); x++)
         {
-            if(mActivityLog.get(x).id() == id)
+            if(log.get(x).id() == id)
             {
                 return x;
             }
@@ -530,11 +718,64 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     }
 
     /**
-     * Removes tracked call events that have not been updated within the retention period.
+     * Completes tracked call events that have not been updated within the call complete time and removes tracked call
+     * events that have not been updated within the retention period.  Lock must be held.
+     * @param now current time
+     * @param completed to receive the calls that completed
      */
-    private void purgeCalls(long now)
+    private void purgeCalls(long now, List<CompletedCall> completed)
     {
-        mCalls.values().removeIf(call -> now - call.mLastUpdate > CALL_RETENTION_MS);
+        Iterator<CallTrack> it = mCalls.values().iterator();
+
+        while(it.hasNext())
+        {
+            CallTrack call = it.next();
+            long age = now - call.mLastUpdate;
+
+            if(age > CALL_COMPLETE_MS)
+            {
+                completeCall(call, completed);
+            }
+
+            if(age > CALL_RETENTION_MS)
+            {
+                it.remove();
+            }
+        }
+    }
+
+    /**
+     * Processes a clear audio (encryption slip) alert from the console mixer: flags the card's current call so that the
+     * card and the call's log entries show the CLEAR status.
+     * @param cardId of the card that received clear audio
+     */
+    public void receiveClearAudioAlert(String cardId)
+    {
+        if(cardId == null)
+        {
+            return;
+        }
+
+        synchronized(this)
+        {
+            CardTrack cardTrack = mCards.computeIfAbsent(cardId, id -> new CardTrack());
+            CallTrack call = cardTrack.mCurrentCall;
+            cardTrack.mClearAlert = true;
+            cardTrack.mClearAlertCall = call;
+
+            if(call != null && !call.mClearAlert)
+            {
+                call.mClearAlert = true;
+
+                if(call.mLogEntry != null)
+                {
+                    ConsoleActivityLogEntry entry = call.mLogEntry;
+                    replaceLogEntry(call, new ConsoleActivityLogEntry(entry.id(), entry.timestamp(), entry.cardId(),
+                        entry.talkgroupName(), entry.talkgroup(), entry.radioName(), entry.radioId(), entry.site(),
+                        ConsoleActivityLogEntry.Status.CLEAR));
+                }
+            }
+        }
     }
 
     /**
@@ -563,24 +804,45 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     }
 
     /**
-     * Creates an immutable snapshot of the current console activity.
+     * Creates an immutable snapshot of the current console activity.  Calls that completed since the last update are
+     * recorded for encryption learning (outside of this router's lock).
      */
-    public synchronized ConsoleActivitySnapshot getSnapshot()
+    public ConsoleActivitySnapshot getSnapshot()
     {
-        long now = mClock.getAsLong();
-        purgeCalls(now);
-        long hangTimeMs = mHangTimeMs;
-        Map<String,ConsoleCardActivity> cards = new HashMap<>();
+        List<CompletedCall> completed = new ArrayList<>();
+        ConsoleActivitySnapshot snapshot;
 
-        for(Map.Entry<String,CardTrack> entry: mCards.entrySet())
+        synchronized(this)
         {
-            CardTrack track = entry.getValue();
-            cards.put(entry.getKey(), new ConsoleCardActivity(entry.getKey(), track.getState(now, hangTimeMs, mCallUpdateTimeoutMs),
-                track.mTalkerId, track.mTalkerName, track.mSite, track.mTalkgroup, track.mRecentTalkers,
-                track.getLastActivity()));
+            long now = mClock.getAsLong();
+            purgeCalls(now, completed);
+            long hangTimeMs = mHangTimeMs;
+            Map<String,ConsoleCardActivity> cards = new HashMap<>();
+
+            for(Map.Entry<String,CardTrack> entry: mCards.entrySet())
+            {
+                CardTrack track = entry.getValue();
+                CardActivityState state = track.getState(now, hangTimeMs, mCallUpdateTimeoutMs);
+                boolean clearAlert = track.mClearAlert && track.mClearAlertCall == track.mCurrentCall &&
+                    (state == CardActivityState.ACTIVE || state == CardActivityState.HANG);
+                cards.put(entry.getKey(), new ConsoleCardActivity(entry.getKey(), state, track.mTalkerId,
+                    track.mTalkerName, track.mSite, track.mTalkgroup, track.mRecentTalkers, track.getLastActivity(),
+                    clearAlert));
+            }
+
+            //Immutable copies of the logs are only created when the logs change
+            if(mLogCopyVersion != mLogVersion)
+            {
+                mActivityLogCopy = List.copyOf(mActivityLog);
+                mAllTrafficLogCopy = List.copyOf(mAllTrafficLog);
+                mLogCopyVersion = mLogVersion;
+            }
+
+            snapshot = new ConsoleActivitySnapshot(now, cards, mActivityLogCopy, mAllTrafficLogCopy, mLogVersion);
         }
 
-        return new ConsoleActivitySnapshot(now, cards, mActivityLog, mLogVersion);
+        recordCompletedCalls(completed);
+        return snapshot;
     }
 
     /**
@@ -630,6 +892,7 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
         mCalls.clear();
         mCards.clear();
         mActivityLog.clear();
+        mAllTrafficLog.clear();
         mLogVersion++;
     }
 
@@ -639,14 +902,25 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     private synchronized void clearCard(String cardId)
     {
         mCards.remove(cardId);
-        mCalls.values().removeIf(call -> call.mCardId.equals(cardId));
+        mCalls.values().removeIf(call -> cardId.equals(call.mCardId));
     }
 
     /**
      * Call details extracted from a call event.
+     * @param talkgroupName card alias name for a call on the console, otherwise the talkgroup alias name or the
+     * formatted TO identifier
+     * @param ignored true when a traffic channel manager did not allocate a traffic channel because the call is not on
+     * the console
      */
-    private record CallDetails(String talkerId, String talkerName, String site, String talkgroup, String cardAliasName,
-                               boolean encrypted)
+    private record CallDetails(String talkerId, String talkerName, String site, String talkgroup, String talkgroupName,
+                               boolean encrypted, boolean ignored)
+    {
+    }
+
+    /**
+     * A completed call on a card, for encryption learning.
+     */
+    private record CompletedCall(String cardId, boolean encrypted)
     {
     }
 
@@ -658,6 +932,9 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
         private final String mCardId;
         private long mLastEventEnd;
         private long mLastUpdate;
+        private boolean mEncrypted;
+        private boolean mCompleted;
+        private boolean mClearAlert;
         private ConsoleActivityLogEntry mLogEntry;
 
         private CallTrack(String cardId)
@@ -674,6 +951,8 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
         private long mLastCallProgress = -1;
         private long mLastAudio = -1;
         private CallTrack mCurrentCall;
+        private CallTrack mClearAlertCall;
+        private boolean mClearAlert;
         private boolean mEncrypted;
         private String mTalkerId;
         private String mTalkerName;

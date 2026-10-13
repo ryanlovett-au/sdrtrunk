@@ -23,6 +23,88 @@
     -fx-text-fill: #4A5868;
 }
 
+/* ---------------------------------------------------------------- Menu bar */
+
+/* Self-contained menu bar styling: dark text on light menus, regardless of the header and root label rules (menu
+   popups inherit the styles of their owner's ancestors) */
+.console-menu-bar {
+    -fx-background-color: #E4E8ED;
+    -fx-border-color: transparent transparent #9AA5B2 transparent;
+    -fx-padding: 0 12 0 12;
+}
+
+.console-menu-bar > .container > .menu-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 0;
+    -fx-padding: 4 10 4 10;
+}
+
+.console-menu-bar > .container > .menu-button > .label {
+    -fx-text-fill: #10233A;
+    -fx-font-size: 13px;
+}
+
+.console-menu-bar > .container > .menu-button:hover,
+.console-menu-bar > .container > .menu-button:focused,
+.console-menu-bar > .container > .menu-button:showing {
+    -fx-background-color: #14365E;
+}
+
+.console-menu-bar > .container > .menu-button:hover > .label,
+.console-menu-bar > .container > .menu-button:focused > .label,
+.console-menu-bar > .container > .menu-button:showing > .label {
+    -fx-text-fill: #FFFFFF;
+}
+
+.console-menu-bar .context-menu {
+    -fx-background-color: #FFFFFF;
+    -fx-border-color: #9AA5B2;
+    -fx-padding: 4 0 4 0;
+}
+
+.console-menu-bar .context-menu .menu-item {
+    -fx-background-color: transparent;
+    -fx-padding: 5 16 5 12;
+}
+
+.console-menu-bar .context-menu .menu-item .label {
+    -fx-text-fill: #10233A;
+    -fx-font-size: 13px;
+}
+
+.console-menu-bar .context-menu .menu-item .accelerator-text {
+    -fx-text-fill: #4A5868;
+}
+
+.console-menu-bar .context-menu .menu-item:focused {
+    -fx-background-color: #14365E;
+}
+
+.console-menu-bar .context-menu .menu-item:focused .label,
+.console-menu-bar .context-menu .menu-item:focused .accelerator-text {
+    -fx-text-fill: #FFFFFF;
+}
+
+.console-menu-bar .context-menu .check-menu-item:checked > .left-container > .check,
+.console-menu-bar .context-menu .radio-menu-item:checked > .left-container > .radio,
+.console-menu-bar .context-menu .menu > .right-container > .arrow {
+    -fx-background-color: #10233A;
+}
+
+.console-menu-bar .context-menu .check-menu-item:focused:checked > .left-container > .check,
+.console-menu-bar .context-menu .radio-menu-item:focused:checked > .left-container > .radio,
+.console-menu-bar .context-menu .menu:focused > .right-container > .arrow {
+    -fx-background-color: #FFFFFF;
+}
+
+.console-menu-bar .context-menu .separator:horizontal .line {
+    -fx-border-color: #DDE2E8 transparent transparent transparent;
+}
+
+.console-menu-bar .context-menu .menu-item:disabled .label {
+    -fx-text-fill: #9AA5B2;
+}
+
 /* ---------------------------------------------------------------- Header */
 
 .console-header {
@@ -47,8 +129,7 @@
     -fx-alignment: center-right;
 }
 
-.header-button,
-.header-menu-button {
+.header-button {
     -fx-background-color: #17355C;
     -fx-background-radius: 4;
     -fx-border-color: #3A5A80;
@@ -62,32 +143,11 @@
     -fx-cursor: hand;
 }
 
-.header-menu-button > .label {
-    -fx-text-fill: #FFFFFF;
-}
-
-/* The settings menu popup inherits the header button's white text - restore dark text on the light popup */
-.header-menu-button .context-menu .menu-item .label,
-.header-menu-button .context-menu .menu-item .check-box,
-.header-menu-button .context-menu .menu-item .radio {
-    -fx-text-fill: #10233A;
-}
-
-.header-menu-button .context-menu .menu-item:focused .label {
-    -fx-text-fill: #FFFFFF;
-}
-
-.header-menu-button > .arrow-button > .arrow {
-    -fx-background-color: #FFFFFF;
-}
-
-.header-button:hover,
-.header-menu-button:hover {
+.header-button:hover {
     -fx-background-color: #1E4373;
 }
 
-.header-button:focused,
-.header-menu-button:focused {
+.header-button:focused {
     -fx-border-color: #FFC069;
 }
 
@@ -387,6 +447,29 @@
     -fx-text-fill: #FFFFFF;
 }
 
+/* Clear audio (encryption slip) alert: red pill and a red border (colour applied inline) with a red glow, which does
+   not change the card size */
+.console-root .card.clear-alert {
+    -fx-effect: dropshadow(gaussian, rgba(217, 45, 32, 0.75), 10, 0.5, 0, 0);
+}
+
+.console-root .card.clear-alert .label.status-pill {
+    -fx-background-color: #B42318;
+    -fx-text-fill: #FFFFFF;
+}
+
+.lock-icon {
+    -fx-fill: transparent;
+    -fx-stroke: #1F2E3F;
+    -fx-stroke-width: 2.4;
+    -fx-stroke-line-join: round;
+}
+
+.encrypted-indicator {
+    -fx-padding: 0;
+    -fx-graphic-text-gap: 0;
+}
+
 .talker {
     -fx-font-weight: bold;
 }
@@ -553,6 +636,43 @@
     -fx-background-color: #FFFFFF;
 }
 
+/* Segmented "Console only | All traffic" toggle in the activity log title bar */
+.log-mode-button {
+    -fx-background-color: #17355C;
+    -fx-background-radius: 0;
+    -fx-border-color: #5C7899;
+    -fx-border-width: 1;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-padding: 3 10 3 10;
+    -fx-cursor: hand;
+}
+
+.log-mode-button.first {
+    -fx-background-radius: 3 0 0 3;
+    -fx-border-radius: 3 0 0 3;
+}
+
+.log-mode-button.last {
+    -fx-background-radius: 0 3 3 0;
+    -fx-border-radius: 0 3 3 0;
+    -fx-border-width: 1 1 1 0;
+}
+
+.log-mode-button:hover {
+    -fx-background-color: #1E4373;
+}
+
+.log-mode-button:selected {
+    -fx-background-color: #FFFFFF;
+    -fx-text-fill: #10233A;
+}
+
+.log-mode-button:focused {
+    -fx-border-color: #FFC069;
+}
+
 .activity-log > .content {
     -fx-background-color: #FFFFFF;
     -fx-border-color: #9AA5B2;
@@ -610,6 +730,32 @@
 
 .activity-table .table-cell.status-encrypted {
     -fx-text-fill: #5B3FB8;
+    -fx-font-weight: bold;
+}
+
+.activity-table .table-cell.status-clear {
+    -fx-text-fill: #FFFFFF;
+    -fx-background-color: #B42318;
+    -fx-font-weight: bold;
+}
+
+/* Calls that are not on the console (all traffic mode): de-emphasised grey text, IGNORED in amber */
+.activity-table .table-row-cell.off-console .table-cell {
+    -fx-text-fill: #6B7785;
+}
+
+.activity-table .table-row-cell.off-console .table-cell.log-talkgroup {
+    -fx-font-weight: normal;
+}
+
+.activity-table .table-row-cell.off-console .table-cell.status-not-on-console,
+.activity-table .table-row-cell.off-console .table-cell.status-encrypted {
+    -fx-text-fill: #6B7785;
+    -fx-font-weight: normal;
+}
+
+.activity-table .table-row-cell.off-console .table-cell.status-ignored {
+    -fx-text-fill: #B54708;
     -fx-font-weight: bold;
 }
 

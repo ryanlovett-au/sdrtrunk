@@ -131,7 +131,8 @@ public class ConsoleMixer
     }
 
     /**
-     * Mixes unity gain samples (e.g. test audio) into one or both output buses without a gain ramp.
+     * Mixes unity gain samples (e.g. test audio or an alert tone) into one or both output buses without a gain ramp.
+     * The samples are subject to the limiter.
      * @param samples to mix, padded with silence when shorter than the frame size
      * @param left true to mix into the left bus
      * @param right true to mix into the right bus

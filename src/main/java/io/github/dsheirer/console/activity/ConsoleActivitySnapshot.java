@@ -27,11 +27,14 @@ import java.util.Map;
  * @param timestamp when the snapshot was created, milliseconds since epoch
  * @param cards activity for each card that has call history, keyed by card identifier.  Cards without an entry are
  * idle and have no call history.
- * @param log activity log entries, most recent first
- * @param logVersion incremented each time the activity log changes, so that the log view is only refreshed when needed
+ * @param log activity log entries for calls on console cards, most recent first
+ * @param allTrafficLog activity log entries for all calls (on and off the console), most recent first
+ * @param logVersion incremented each time either activity log changes, so that the log view is only refreshed when
+ * needed
  */
 public record ConsoleActivitySnapshot(long timestamp, Map<String,ConsoleCardActivity> cards,
-                                      List<ConsoleActivityLogEntry> log, long logVersion)
+                                      List<ConsoleActivityLogEntry> log, List<ConsoleActivityLogEntry> allTrafficLog,
+                                      long logVersion)
 {
     /**
      * Constructs an instance
@@ -40,6 +43,7 @@ public record ConsoleActivitySnapshot(long timestamp, Map<String,ConsoleCardActi
     {
         cards = cards != null ? Map.copyOf(cards) : Map.of();
         log = log != null ? List.copyOf(log) : List.of();
+        allTrafficLog = allTrafficLog != null ? List.copyOf(allTrafficLog) : List.of();
     }
 
     /**

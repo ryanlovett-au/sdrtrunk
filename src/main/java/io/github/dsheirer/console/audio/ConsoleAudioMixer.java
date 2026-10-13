@@ -69,6 +69,7 @@ public class ConsoleAudioMixer implements Listener<AudioSegment>
     private static final long OUTPUT_STALLED_MS = 1000;
 
     private final Broadcaster<ConsoleAudioLevels> mLevelBroadcaster = new Broadcaster<>();
+    private final Broadcaster<String> mClearAudioAlertBroadcaster = new Broadcaster<>();
     private final AtomicReference<ConsoleAudioLevels> mPendingLevels = new AtomicReference<>();
     private final UserPreferences mUserPreferences;
     private final ConsoleLayoutManager mConsoleLayoutManager;
@@ -97,6 +98,9 @@ public class ConsoleAudioMixer implements Listener<AudioSegment>
         mConsoleAudioEngine = new ConsoleAudioEngine(consoleCardResolver,
             () -> mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled());
         mConsoleAudioEngine.setLevelListener(this::levelsAvailable);
+        mConsoleAudioEngine.setClearAudioAlertListener(cardId -> execute(() ->
+            mClearAudioAlertBroadcaster.broadcast(cardId)));
+        updateSettings();
 
         mExecutorService = Executors.newSingleThreadScheduledExecutor(
             new NamingThreadFactory("sdrtrunk console audio mixer"));
@@ -146,6 +150,24 @@ public class ConsoleAudioMixer implements Listener<AudioSegment>
     }
 
     /**
+     * Adds a listener to receive the card identifier of each clear audio (encryption slip) alert raised by the mixer.
+     * Alerts are delivered on the console mixer thread.  Listeners must not block.
+     * @param listener to add
+     */
+    public void addClearAudioAlertListener(Listener<String> listener)
+    {
+        mClearAudioAlertBroadcaster.addListener(listener);
+    }
+
+    /**
+     * Removes the clear audio alert listener.
+     */
+    public void removeClearAudioAlertListener(Listener<String> listener)
+    {
+        mClearAudioAlertBroadcaster.removeListener(listener);
+    }
+
+    /**
      * Stops the mixer and closes the console audio output.  Traditional playback is not resumed.
      */
     public void dispose()
@@ -169,11 +191,13 @@ public class ConsoleAudioMixer implements Listener<AudioSegment>
 
         mExecutorService.shutdownNow();
         mLevelBroadcaster.clear();
+        mClearAudioAlertBroadcaster.clear();
     }
 
     /**
-     * Console layout change listener.  Card changes are applied to playing voices on the next frame.  Console mode
-     * changes are applied on the console mixer thread.
+     * Console layout change listener.  Card changes are applied to playing voices on the next frame, and the clear
+     * audio alert setting from the next frame.  Console mode changes are applied on the console mixer
+     * thread.
      */
     private void layoutChanged(ConsoleLayoutEvent event)
     {
@@ -182,8 +206,17 @@ public class ConsoleAudioMixer implements Listener<AudioSegment>
         if(event.getType() == ConsoleLayoutEvent.Type.SETTINGS_CHANGED ||
            event.getType() == ConsoleLayoutEvent.Type.LAYOUT_LOADED)
         {
+            updateSettings();
             execute(this::updateMode);
         }
+    }
+
+    /**
+     * Applies the clear audio alert setting to the engine.
+     */
+    private void updateSettings()
+    {
+        mConsoleAudioEngine.setClearAudioAlertEnabled(mConsoleLayoutManager.isClearAudioAlertEnabled());
     }
 
     /**

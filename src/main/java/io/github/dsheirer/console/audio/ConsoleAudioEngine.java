@@ -55,6 +55,12 @@ import org.slf4j.LoggerFactory;
  * while duplicate playback suppression is enabled.  These checks are repeated every frame because the flags can change
  * during a call.
  *
+ * Clear audio (encryption slip) alert: when enabled, a voice that starts playing clear (non-encrypted) audio for a card
+ * whose talkgroup is treated as normally encrypted (ConsoleCard.isTreatedAsEncrypted()) raises an alert once per voice
+ * (i.e. once per call, including its linked continuation segments): the two-tone AlertTone is mixed on the card's pan
+ * side(s), even when the card is muted, and the alert listener is notified with the card identifier.  Encrypted
+ * segments never become voices, so any voice that plays audio is clear audio.
+ *
  * Consumer counting: the engine owns the consumer count that the audio segment broadcaster increments for this
  * listener.  Each received segment's count is decremented exactly once: when it is discarded, or by the voice that
  * plays it.
@@ -84,6 +90,10 @@ public class ConsoleAudioEngine
      * Maximum simultaneous voices.  Segments beyond this limit are not played.
      */
     public static final int MAXIMUM_VOICES = 64;
+    /**
+     * Maximum simultaneous alert tones.
+     */
+    public static final int MAXIMUM_ALERTS = 4;
 
     private final LinkedTransferQueue<AudioSegment> mIntakeQueue = new LinkedTransferQueue<>();
     private final List<ConsoleVoice> mVoices = new ArrayList<>();
@@ -95,7 +105,10 @@ public class ConsoleAudioEngine
     private final AtomicBoolean mLayoutChanged = new AtomicBoolean();
     private final ConsoleCardResolver mConsoleCardResolver;
     private final BooleanSupplier mDuplicateSuppression;
+    private final List<AlertPlayback> mAlerts = new ArrayList<>();
     private volatile boolean mEnabled;
+    private volatile boolean mClearAudioAlertEnabled = true;
+    private Listener<String> mClearAudioAlertListener;
     private volatile long mLastFrameTimestamp;
     private Listener<ConsoleAudioLevels> mLevelListener;
     private float[] mTestAudio;
@@ -211,6 +224,34 @@ public class ConsoleAudioEngine
     }
 
     /**
+     * Enables or disables the clear audio (encryption slip) alert.
+     */
+    public void setClearAudioAlertEnabled(boolean enabled)
+    {
+        mClearAudioAlertEnabled = enabled;
+    }
+
+    /**
+     * Sets the listener to receive the card identifier of each clear audio alert.  The listener is invoked on the
+     * thread that drives processFrame() (the audio output thread) while the engine lock is held, so it must return
+     * immediately, for example by handing the card identifier to another thread.
+     * @param listener to receive card identifiers, or null
+     */
+    public void setClearAudioAlertListener(Listener<String> listener)
+    {
+        mLock.lock();
+
+        try
+        {
+            mClearAudioAlertListener = listener;
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+    }
+
+    /**
      * Timestamp of the most recently processed frame (or of the last enable/disable), for detecting an output that is
      * not running.
      */
@@ -275,6 +316,7 @@ public class ConsoleAudioEngine
             }
 
             mVoices.clear();
+            mAlerts.clear();
             mTestAudio = null;
             mMixer.reset();
             mCardAccumulators.clear();
@@ -336,7 +378,14 @@ public class ConsoleAudioEngine
                     voice.stop();
                 }
 
-                mMixer.mix(voice.read(timestamp), voice.getGain(), voice.getLevelMeter());
+                float[] audio = voice.read(timestamp);
+
+                if(audio != null)
+                {
+                    checkClearAudio(voice);
+                }
+
+                mMixer.mix(audio, voice.getGain(), voice.getLevelMeter());
                 accumulate(voice);
 
                 if(voice.isStopping() || voice.isFinished(timestamp))
@@ -347,6 +396,7 @@ public class ConsoleAudioEngine
             }
 
             mixTestAudio();
+            mixAlerts();
             mMixer.finishFrame();
 
             System.arraycopy(mMixer.getLeft(), 0, left, 0, SAMPLES_PER_FRAME);
@@ -460,6 +510,86 @@ public class ConsoleAudioEngine
     }
 
     /**
+     * Raises the clear audio alert, once per voice, when the voice is playing clear audio for a card that is treated
+     * as normally encrypted.  Lock must be held.
+     */
+    private void checkClearAudio(ConsoleVoice voice)
+    {
+        ConsoleCard card = voice.getCard();
+
+        if(!mClearAudioAlertEnabled || voice.isClearAudioAlerted() || voice.isStopping() || card == null ||
+           !card.isTreatedAsEncrypted())
+        {
+            return;
+        }
+
+        AudioSegment segment = voice.getCurrentSegment();
+
+        if(segment == null || segment.isEncrypted())
+        {
+            return;
+        }
+
+        voice.setClearAudioAlerted(true);
+
+        if(mAlerts.size() < MAXIMUM_ALERTS)
+        {
+            mAlerts.add(new AlertPlayback(AlertTone.getClearAudioAlertShared(), card.getPan()));
+        }
+
+        if(mClearAudioAlertListener != null)
+        {
+            try
+            {
+                mClearAudioAlertListener.receive(card.getId());
+            }
+            catch(Exception e)
+            {
+                LOGGING_SUPPRESSOR.error("console alert listener", 3, "Error dispatching clear audio alert", e);
+            }
+        }
+    }
+
+    /**
+     * Mixes the next frame of each playing alert tone.  Lock must be held.
+     */
+    private void mixAlerts()
+    {
+        Iterator<AlertPlayback> it = mAlerts.iterator();
+
+        while(it.hasNext())
+        {
+            AlertPlayback alert = it.next();
+            int end = Math.min(alert.mOffset + SAMPLES_PER_FRAME, alert.mSamples.length);
+            float[] samples = Arrays.copyOfRange(alert.mSamples, alert.mOffset, end);
+            mMixer.mixDirect(samples, alert.mPan != AudioPan.RIGHT, alert.mPan != AudioPan.LEFT);
+            alert.mOffset = end;
+
+            if(alert.mOffset >= alert.mSamples.length)
+            {
+                it.remove();
+            }
+        }
+    }
+
+    /**
+     * Number of alert tones currently playing.
+     */
+    public int getAlertCount()
+    {
+        mLock.lock();
+
+        try
+        {
+            return mAlerts.size();
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+    }
+
+    /**
      * Mixes the next frame of test audio, if any.  Lock must be held.
      */
     private void mixTestAudio()
@@ -543,6 +673,22 @@ public class ConsoleAudioEngine
             {
                 LOGGING_SUPPRESSOR.error("console level listener", 3, "Error dispatching console audio levels", e);
             }
+        }
+    }
+
+    /**
+     * Playback position of an alert tone.
+     */
+    private static class AlertPlayback
+    {
+        private final float[] mSamples;
+        private final AudioPan mPan;
+        private int mOffset;
+
+        private AlertPlayback(float[] samples, AudioPan pan)
+        {
+            mSamples = samples;
+            mPan = pan != null ? pan : AudioPan.BOTH;
         }
     }
 

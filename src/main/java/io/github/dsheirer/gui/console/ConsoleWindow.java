@@ -32,11 +32,19 @@ import io.github.dsheirer.console.activity.ConsoleActivitySnapshot;
 import io.github.dsheirer.console.ConsoleAliasDrop;
 import io.github.dsheirer.console.control.ControlChannelMonitor;
 import io.github.dsheirer.console.control.NetworkSiteDetailProvider;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.ApplicationWindowRegistry;
+import io.github.dsheirer.gui.DirectoryOpener;
+import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
+import io.github.dsheirer.gui.playlist.ViewPlaylistRequest;
+import io.github.dsheirer.gui.playlist.alias.sheet.ViewAliasSheetRequest;
+import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
+import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import java.awt.EventQueue;
+import java.io.File;
 import java.net.URL;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -46,6 +54,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -60,13 +69,18 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
-import javafx.scene.control.MenuButton;
+import javafx.scene.control.MenuBar;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioMenuItem;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyCodeCombination;
+import javafx.scene.input.KeyCombination;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -79,7 +93,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Radio console window: talkgroup cards arranged in groups, a control channel strip, and an activity log.
+ * Radio console window: a menu bar, a header (title, edit layout, console mode and clock), talkgroup
+ * cards arranged in groups, a control channel strip, and an activity log.
+ *
+ * Menu bar: File (traditional view, exit), View (the application's other windows and data folders, as in the main
+ * window's View menu) and Console (layout editing and console settings).  The menu bar is part of the window (not the
+ * macOS system menu bar), like the main window's Swing menu bar.
  *
  * The window is a separate JavaFX stage that registers with the application window registry as a keep-alive window,
  * so closing the main window hides it (instead of exiting) while the console is showing, and closing the console
@@ -130,9 +149,12 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
 
     private Label mClockLabel;
     private ToggleButton mEditButton;
-    private Button mAddGroupButton;
     private ToggleButton mConsoleModeSwitch;
+    private CheckMenuItem mEditMenuItem;
+    private CheckMenuItem mConsoleModeMenuItem;
     private CheckMenuItem mFilterMenuItem;
+    private CheckMenuItem mShowAllTrafficMenuItem;
+    private CheckMenuItem mClearAudioAlertMenuItem;
     private final ToggleGroup mHangTimeToggleGroup = new ToggleGroup();
     private ControlChannelStrip mControlChannelStrip;
     private VBox mHintBanner;
@@ -253,8 +275,15 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         //it is only as tall as the groups so that the activity log follows directly below the groups
         ScrollPane groupsScrollPane = createCenter();
         VBox.setVgrow(groupsScrollPane, Priority.ALWAYS);
-        mActivityLogView = new ActivityLogView(this::getInkColor);
-        VBox root = new VBox(createHeader(), createControlChannelStrip(), groupsScrollPane, mActivityLogView);
+        mActivityLogView = new ActivityLogView(this::getInkColor, showAll -> {
+            if(!mUpdatingSettings)
+            {
+                mLayoutManager.setActivityLogShowAll(showAll);
+            }
+        });
+        MenuBar menuBar = createMenuBar();
+        VBox root = new VBox(menuBar, createHeader(), createControlChannelStrip(), groupsScrollPane,
+            mActivityLogView);
         root.getStyleClass().add("console-root");
 
         Scene scene = new Scene(root, 1280, 860);
@@ -305,8 +334,104 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     }
 
     /**
-     * Creates the header bar: title, edit layout, add group, traditional view, console mode switch, settings menu and
-     * clock.
+     * Creates the menu bar: File, View and Console menus.
+     */
+    private MenuBar createMenuBar()
+    {
+        //File
+        MenuItem traditionalItem = new MenuItem("_Traditional view");
+        traditionalItem.setOnAction(event -> EventQueue.invokeLater(mApplicationWindowRegistry::showMainWindow));
+        MenuItem exitItem = new MenuItem("E_xit");
+        exitItem.setOnAction(event -> EventQueue.invokeLater(mApplicationWindowRegistry::exitApplication));
+        Menu fileMenu = new Menu("_File", null, traditionalItem, new SeparatorMenuItem(), exitItem);
+
+        //View: the same application windows and folders as the main window's View menu
+        Menu viewMenu = new Menu("_View", null,
+            requestItem("_Playlist Editor", ViewPlaylistRequest::new),
+            requestItem("_Alias Sheet", ViewAliasSheetRequest::new),
+            requestItem("_User Preferences", ViewUserPreferenceEditorRequest::new),
+            requestItem("_Icon Manager", ViewIconManagerRequest::new),
+            requestItem("_Message Recording Viewer (.bits)", ViewRecordingViewerRequest::new),
+            new SeparatorMenuItem(),
+            directoryItem("Application _Log Files", () -> mUserPreferences.getDirectoryPreference()
+                .getDirectoryApplicationLog().toFile()),
+            directoryItem("Audio _Recordings", () -> mUserPreferences.getDirectoryPreference()
+                .getDirectoryRecording().toFile()),
+            directoryItem("Channel _Event Log Files", () -> mUserPreferences.getDirectoryPreference()
+                .getDirectoryEventLog().toFile()));
+
+        //Console
+        mEditMenuItem = new CheckMenuItem("_Edit layout");
+        mEditMenuItem.setAccelerator(new KeyCodeCombination(KeyCode.E, KeyCombination.SHORTCUT_DOWN));
+        mEditMenuItem.setOnAction(event -> setEditMode(mEditMenuItem.isSelected()));
+        MenuItem addGroupItem = new MenuItem("_Add group…");
+        addGroupItem.setOnAction(event -> addGroup());
+
+        mConsoleModeMenuItem = new CheckMenuItem("_Console mode");
+        mConsoleModeMenuItem.setOnAction(event -> mLayoutManager.setConsoleModeEnabled(
+            mConsoleModeMenuItem.isSelected()));
+        mFilterMenuItem = new CheckMenuItem("_Follow only console talkgroups");
+        mFilterMenuItem.setOnAction(event -> mLayoutManager.setTalkgroupFilterEnabled(mFilterMenuItem.isSelected()));
+
+        Menu hangTimeMenu = new Menu("Activity _hang time");
+
+        for(long hangTime: HANG_TIME_OPTIONS_MS)
+        {
+            RadioMenuItem item = new RadioMenuItem(hangTime == 0 ? "None" : (hangTime / 1000) + " s");
+            item.setUserData(hangTime);
+            item.setToggleGroup(mHangTimeToggleGroup);
+            item.setOnAction(event -> mLayoutManager.setActivityHangTimeMs(hangTime));
+            hangTimeMenu.getItems().add(item);
+        }
+
+        mShowAllTrafficMenuItem = new CheckMenuItem("_Show all traffic in activity log");
+        mShowAllTrafficMenuItem.setOnAction(event -> mLayoutManager.setActivityLogShowAll(
+            mShowAllTrafficMenuItem.isSelected()));
+        mClearAudioAlertMenuItem = new CheckMenuItem("Alert on clear audio from encrypted _talkgroups");
+        mClearAudioAlertMenuItem.setOnAction(event -> mLayoutManager.setClearAudioAlertEnabled(
+            mClearAudioAlertMenuItem.isSelected()));
+
+        Menu consoleMenu = new Menu("_Console", null, mEditMenuItem, addGroupItem, new SeparatorMenuItem(),
+            mConsoleModeMenuItem, mFilterMenuItem, hangTimeMenu, mShowAllTrafficMenuItem, mClearAudioAlertMenuItem);
+
+        MenuBar menuBar = new MenuBar(fileMenu, viewMenu, consoleMenu);
+        menuBar.getStyleClass().add("console-menu-bar");
+        menuBar.setUseSystemMenuBar(false);
+        return menuBar;
+    }
+
+    /**
+     * Creates a menu item that posts a window request on the global event bus.
+     */
+    private static MenuItem requestItem(String text, Supplier<Object> request)
+    {
+        MenuItem item = new MenuItem(text);
+        item.setOnAction(event -> MyEventBus.getGlobalEventBus().post(request.get()));
+        return item;
+    }
+
+    /**
+     * Creates a menu item that opens a directory in the platform's file explorer (on the Swing thread, as the main
+     * window does) and shows an error dialog with the directory location when the file explorer can't be launched.
+     */
+    private MenuItem directoryItem(String text, Supplier<File> directory)
+    {
+        MenuItem item = new MenuItem(text);
+        item.setOnAction(event -> {
+            File folder = directory.get();
+            EventQueue.invokeLater(() -> {
+                if(!DirectoryOpener.open(folder))
+                {
+                    Platform.runLater(() -> showError(DirectoryOpener.ERROR_TITLE,
+                        DirectoryOpener.getErrorMessage(folder)));
+                }
+            });
+        });
+        return item;
+    }
+
+    /**
+     * Creates the header bar: title, edit layout, console mode switch and clock.
      */
     private HBox createHeader()
     {
@@ -316,17 +441,9 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
 
         mEditButton = new ToggleButton("Edit layout");
         mEditButton.getStyleClass().add("header-button");
-        mEditButton.setTooltip(new Tooltip("Add, rename, reorder and remove groups and talkgroup cards"));
+        mEditButton.setTooltip(new Tooltip("Add, rename, reorder and remove groups and talkgroup cards (" +
+            new KeyCodeCombination(KeyCode.E, KeyCombination.SHORTCUT_DOWN).getDisplayText() + ")"));
         mEditButton.selectedProperty().addListener((observable, oldValue, selected) -> setEditMode(selected));
-
-        mAddGroupButton = new Button("Add group");
-        mAddGroupButton.getStyleClass().add("header-button");
-        mAddGroupButton.setOnAction(event -> addGroup());
-
-        Button traditionalButton = new Button("Traditional view");
-        traditionalButton.getStyleClass().add("header-button");
-        traditionalButton.setTooltip(new Tooltip("Show the main sdrtrunk window"));
-        traditionalButton.setOnAction(event -> EventQueue.invokeLater(mApplicationWindowRegistry::showMainWindow));
 
         StackPane track = new StackPane();
         track.getStyleClass().add("switch-track");
@@ -345,40 +462,17 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
             }
         });
 
-        mFilterMenuItem = new CheckMenuItem("Follow only console talkgroups");
-        mFilterMenuItem.selectedProperty().addListener((observable, oldValue, selected) -> {
-            if(!mUpdatingSettings)
-            {
-                mLayoutManager.setTalkgroupFilterEnabled(selected);
-            }
-        });
-
-        Menu hangTimeMenu = new Menu("Activity hang time");
-
-        for(long hangTime: HANG_TIME_OPTIONS_MS)
-        {
-            RadioMenuItem item = new RadioMenuItem(hangTime == 0 ? "None" : (hangTime / 1000) + " s");
-            item.setUserData(hangTime);
-            item.setToggleGroup(mHangTimeToggleGroup);
-            item.setOnAction(event -> mLayoutManager.setActivityHangTimeMs(hangTime));
-            hangTimeMenu.getItems().add(item);
-        }
-
-        MenuButton settingsButton = new MenuButton("Settings", null, mFilterMenuItem, hangTimeMenu);
-        settingsButton.getStyleClass().add("header-menu-button");
-
         mClockLabel = new Label();
         mClockLabel.getStyleClass().addAll("console-clock", "mono");
         mClockLabel.setMinWidth(Region.USE_PREF_SIZE);
 
-        for(Region control: List.of(mEditButton, mAddGroupButton, traditionalButton, mConsoleModeSwitch, settingsButton))
+        for(Region control: List.of(mEditButton, mConsoleModeSwitch))
         {
             control.setMinWidth(Region.USE_PREF_SIZE);
         }
 
         //Controls wrap onto additional rows when the window is narrow
-        FlowPane controls = new FlowPane(12, 8, mEditButton, mAddGroupButton, traditionalButton, mConsoleModeSwitch,
-            settingsButton, mClockLabel);
+        FlowPane controls = new FlowPane(12, 8, mEditButton, mConsoleModeSwitch, mClockLabel);
         controls.setAlignment(Pos.CENTER_RIGHT);
         controls.setMinWidth(0);
         controls.setPrefWrapLength(900);
@@ -565,26 +659,32 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         boolean consoleMode = mLayoutManager.isConsoleModeEnabled();
         boolean filter = mLayoutManager.isTalkgroupFilterEnabled();
         long hangTime = mLayoutManager.getActivityHangTimeMs();
+        boolean showAll = mLayoutManager.isActivityLogShowAll();
+        boolean clearAudioAlert = mLayoutManager.isClearAudioAlertEnabled();
         mLayout.setConsoleModeEnabled(consoleMode);
         mLayout.setTalkgroupFilterEnabled(filter);
         mLayout.setActivityHangTimeMs(hangTime);
+        mLayout.setActivityLogShowAll(showAll);
+        mLayout.setClearAudioAlertEnabled(clearAudioAlert);
 
         mUpdatingSettings = true;
 
         try
         {
             mConsoleModeSwitch.setSelected(consoleMode);
+            mConsoleModeMenuItem.setSelected(consoleMode);
             mFilterMenuItem.setSelected(filter);
             mHangTimeToggleGroup.getToggles().forEach(toggle ->
                 toggle.setSelected(toggle.getUserData() instanceof Long value && value == hangTime));
+            mShowAllTrafficMenuItem.setSelected(showAll);
+            mActivityLogView.setShowAll(showAll);
+            mClearAudioAlertMenuItem.setSelected(clearAudioAlert);
         }
         finally
         {
             mUpdatingSettings = false;
         }
 
-        mAddGroupButton.setVisible(mEditMode);
-        mAddGroupButton.setManaged(mEditMode);
         updateHintBanner();
         updateControlChannels();
     }
@@ -662,6 +762,11 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         if(mEditButton.isSelected() != editMode)
         {
             mEditButton.setSelected(editMode);
+        }
+
+        if(mEditMenuItem.isSelected() != editMode)
+        {
+            mEditMenuItem.setSelected(editMode);
         }
 
         rebuild();
@@ -745,18 +850,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
      */
     private void updateControlChannels()
     {
-        int linked = 0;
-
-        for(ConsoleCardView cardView: mCardViews.values())
-        {
-            if(cardView.isLinked())
-            {
-                linked++;
-            }
-        }
-
-        mControlChannelStrip.update(mControlChannelMonitor.getControlChannels(), linked,
-            mConsoleCardResolver.isFilterActive());
+        mControlChannelStrip.update(mControlChannelMonitor.getControlChannels());
     }
 
     /**

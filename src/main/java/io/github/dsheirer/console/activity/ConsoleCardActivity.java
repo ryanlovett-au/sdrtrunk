@@ -32,9 +32,11 @@ import java.util.List;
  * @param talkgroup formatted TO identifier of the current (or most recent) call, or null
  * @param recentTalkers distinct radios recently heard on the card, most recent first
  * @param lastActivity timestamp of the most recent call activity, milliseconds since epoch, or 0
+ * @param clearAlert true while the card's current (or hanging) call raised a clear audio (encryption slip) alert
  */
 public record ConsoleCardActivity(String cardId, CardActivityState state, String talkerId, String talkerName,
-                                  String site, String talkgroup, List<RecentTalker> recentTalkers, long lastActivity)
+                                  String site, String talkgroup, List<RecentTalker> recentTalkers, long lastActivity,
+                                  boolean clearAlert)
 {
     /**
      * Constructs an instance
@@ -51,7 +53,7 @@ public record ConsoleCardActivity(String cardId, CardActivityState state, String
      */
     public static ConsoleCardActivity idle(String cardId)
     {
-        return new ConsoleCardActivity(cardId, CardActivityState.IDLE, null, null, null, null, List.of(), 0);
+        return new ConsoleCardActivity(cardId, CardActivityState.IDLE, null, null, null, null, List.of(), 0, false);
     }
 
     /**

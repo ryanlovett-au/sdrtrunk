@@ -131,6 +131,85 @@ public class ConsoleLayoutManagerTest
     }
 
     @Test
+    void logModeAndClearAudioAlertSettingsRoundTrip()
+    {
+        ConsoleLayoutManager manager = new ConsoleLayoutManager(getLayoutPath());
+        List<ConsoleLayoutEvent> events = new ArrayList<>();
+        manager.addListener(events::add);
+        manager.load();
+        assertFalse(manager.isActivityLogShowAll(), "Default log mode is console only");
+        assertTrue(manager.isClearAudioAlertEnabled(), "Clear audio alert is enabled by default");
+
+        ConsoleGroup group = manager.addGroup("Fire");
+        ConsoleCard card1 = manager.addCard(group.getId(), "alias-uuid-1");
+        ConsoleCard card2 = manager.addCard(group.getId(), "alias-uuid-2");
+        assertEquals(ClearAudioAlert.AUTO, card1.getClearAudioAlert(), "Default clear audio alert");
+        events.clear();
+
+        manager.setActivityLogShowAll(true);
+        manager.setActivityLogShowAll(true); //No change - no event
+        manager.setClearAudioAlertEnabled(false);
+        manager.setCardClearAudioAlert(card1.getId(), ClearAudioAlert.NEVER);
+
+        for(int x = 0; x < ConsoleCard.ENCRYPTED_CALLS_TO_LEARN; x++)
+        {
+            manager.recordCardCall(card2.getId(), true);
+        }
+
+        assertEquals(List.of(ConsoleLayoutEvent.Type.SETTINGS_CHANGED, ConsoleLayoutEvent.Type.SETTINGS_CHANGED,
+            ConsoleLayoutEvent.Type.CARD_CHANGED, ConsoleLayoutEvent.Type.CARD_CHANGED,
+            ConsoleLayoutEvent.Type.CARD_CHANGED, ConsoleLayoutEvent.Type.CARD_CHANGED),
+            events.stream().map(ConsoleLayoutEvent::getType).toList(), "Event sequence");
+        assertTrue(events.getLast().getCard().isEncryptedLearned(), "Changed card snapshot learned state");
+
+        //Further encrypted calls do not change the (capped) state - no event
+        manager.recordCardCall(card2.getId(), true);
+        assertEquals(6, events.size(), "Expected no event for an unchanged card");
+        manager.saveNow();
+
+        ConsoleLayoutManager reloaded = new ConsoleLayoutManager(getLayoutPath());
+        reloaded.load();
+        assertTrue(reloaded.isActivityLogShowAll(), "Log mode");
+        assertFalse(reloaded.isClearAudioAlertEnabled(), "Clear audio alert");
+        ConsoleCard loaded1 = reloaded.getCard(card1.getId());
+        ConsoleCard loaded2 = reloaded.getCard(card2.getId());
+        assertEquals(ClearAudioAlert.NEVER, loaded1.getClearAudioAlert(), "Clear audio alert override");
+        assertFalse(loaded1.isTreatedAsEncrypted(), "NEVER is not treated as encrypted");
+        assertTrue(loaded2.isEncryptedLearned(), "Learned state");
+        assertEquals(ConsoleCard.ENCRYPTED_CALLS_TO_LEARN, loaded2.getEncryptedCallStreak(), "Encrypted call streak");
+        assertTrue(loaded2.isTreatedAsEncrypted(), "Learned card is treated as encrypted");
+    }
+
+    @Test
+    void encryptionLearningRules()
+    {
+        ConsoleCard card = new ConsoleCard("alias-uuid-1");
+        card.recordCall(true);
+        card.recordCall(true);
+        card.recordCall(false);
+        card.recordCall(true);
+        card.recordCall(true);
+        assertFalse(card.isEncryptedLearned(), "Expected consecutive encrypted calls to be required");
+        card.recordCall(true);
+        assertTrue(card.isEncryptedLearned(), "Expected learned after three consecutive encrypted calls");
+
+        //Clear calls (slips) keep the learned state until CLEAR_CALLS_TO_UNLEARN consecutive clear calls
+        for(int x = 0; x < ConsoleCard.CLEAR_CALLS_TO_UNLEARN - 1; x++)
+        {
+            card.recordCall(false);
+            assertTrue(card.isEncryptedLearned(), "Expected learned state retained after clear call " + (x + 1));
+        }
+
+        card.recordCall(false);
+        assertFalse(card.isEncryptedLearned(), "Expected learned state cleared after consecutive clear calls");
+
+        card.setClearAudioAlert(ClearAudioAlert.ALWAYS);
+        assertTrue(card.isTreatedAsEncrypted(), "ALWAYS override");
+        card.setClearAudioAlert(null);
+        assertEquals(ClearAudioAlert.AUTO, card.getClearAudioAlert(), "Null is AUTO");
+    }
+
+    @Test
     void corruptFileIsBackedUpAndStartsEmpty() throws Exception
     {
         Path path = getLayoutPath();
