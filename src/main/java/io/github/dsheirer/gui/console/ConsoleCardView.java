@@ -55,6 +55,9 @@ import javafx.scene.shape.SVGPath;
  * next to the talkgroup.  While a call on the card raised a clear audio (encryption slip) alert, the card shows a red
  * CLEAR status pill and a red border.
  *
+ * Cards in a muted group are shown as muted (RX MUTED, muted fill) while the card's own mute setting is unchanged: the
+ * mute button shows a "muted by group" state (muted icon with a dashed red outline) unless the card is also muted.
+ *
  * Audio settings changes are applied via the console layout manager; the view is updated from layout manager events
  * (setCard()) and from console activity snapshots (setActivity()).  Invoke all methods on the JavaFX thread.
  */
@@ -71,6 +74,7 @@ public class ConsoleCardView extends VBox
     private static final String LOCK_ICON = "M7 11 V8 A5 5 0 0 1 17 8 V11 M5 11 H19 V21 H5 Z";
     private static final String CLEAR_ALERT_STYLE_CLASS = "clear-alert";
     private static final String CLEAR_ALERT_BORDER = "#D92D20";
+    private static final String GROUP_MUTED_STYLE_CLASS = "group-muted";
 
     private final ConsoleWindow mConsoleWindow;
     private ConsoleCard mCard;
@@ -82,6 +86,7 @@ public class ConsoleCardView extends VBox
     private int mBaseColor;
     private boolean mUpdating;
     private boolean mEditMode;
+    private boolean mGroupMuted;
 
     private final Label mNameLabel = ConsoleFonts.condensed(new Label());
     private final Label mTalkgroupLabel = new Label();
@@ -282,6 +287,39 @@ public class ConsoleCardView extends VBox
     }
 
     /**
+     * Card (alias) name
+     */
+    public String getName()
+    {
+        return mAliasInfo.name();
+    }
+
+    /**
+     * Indicates if the card's audio is muted: the card is muted or the card's group is muted.
+     */
+    public boolean isAudioMuted()
+    {
+        return mCard.isMuted() || mGroupMuted;
+    }
+
+    /**
+     * Sets the muted state of the card's group.  The card is shown as muted while its group is muted, without changing
+     * the card's own mute setting.
+     */
+    public void setGroupMuted(boolean groupMuted)
+    {
+        if(groupMuted == mGroupMuted)
+        {
+            return;
+        }
+
+        mGroupMuted = groupMuted;
+        updateMuteButton();
+        mVisualState = null;
+        updateActivity(mActivity);
+    }
+
+    /**
      * Indicates if the card's alias was found.
      */
     public boolean isLinked()
@@ -313,7 +351,7 @@ public class ConsoleCardView extends VBox
         mNameLabel.setText(aliasInfo.name());
         mTalkgroupLabel.setText(aliasInfo.identifier());
         mBaseColor = ConsoleCardColors.getBaseColor(aliasInfo.color(), mCard.getId());
-        mMuteButton.setAccessibleText("Mute " + aliasInfo.name());
+        updateMuteButton();
         boolean linked = aliasInfo.linked();
         mControlsRow.setVisible(linked);
         mControlsRow.setManaged(linked);
@@ -372,14 +410,41 @@ public class ConsoleCardView extends VBox
     }
 
     /**
-     * Updates the mute button icon and tooltip for the mute state.
+     * Updates the mute button icon, style and tooltip for the card's mute state and the group's mute state.
      */
     private void updateMuteButton()
     {
         boolean muted = mMuteButton.isSelected();
-        mMuteIcon.setContent(muted ? MUTED_ICON : UNMUTED_ICON);
-        mMuteButton.setTooltip(new Tooltip(muted ? "Unmute" : "Mute"));
-        mMuteButton.setAccessibleText((muted ? "Unmute " : "Mute ") + mAliasInfo.name());
+        boolean groupMutedOnly = mGroupMuted && !muted;
+        mMuteIcon.setContent(muted || mGroupMuted ? MUTED_ICON : UNMUTED_ICON);
+
+        if(groupMutedOnly && !mMuteButton.getStyleClass().contains(GROUP_MUTED_STYLE_CLASS))
+        {
+            mMuteButton.getStyleClass().add(GROUP_MUTED_STYLE_CLASS);
+        }
+        else if(!groupMutedOnly)
+        {
+            mMuteButton.getStyleClass().remove(GROUP_MUTED_STYLE_CLASS);
+        }
+
+        String tooltip;
+
+        if(groupMutedOnly)
+        {
+            tooltip = "Muted by group (click to also mute this card)";
+        }
+        else if(muted && mGroupMuted)
+        {
+            tooltip = "Unmute this card (the group is also muted)";
+        }
+        else
+        {
+            tooltip = muted ? "Unmute" : "Mute";
+        }
+
+        mMuteButton.setTooltip(new Tooltip(tooltip));
+        mMuteButton.setAccessibleText((muted ? "Unmute " : "Mute ") + mAliasInfo.name() +
+            (mGroupMuted ? ", muted by group" : ""));
     }
 
     /**
@@ -414,7 +479,7 @@ public class ConsoleCardView extends VBox
     {
         mActivity = activity != null ? activity : ConsoleCardActivity.idle(mCard.getId());
 
-        ConsoleCardColors.VisualState state = ConsoleCardColors.VisualState.of(mActivity.state(), mCard.isMuted(),
+        ConsoleCardColors.VisualState state = ConsoleCardColors.VisualState.of(mActivity.state(), isAudioMuted(),
             mAliasInfo.linked());
 
         if(state == ConsoleCardColors.VisualState.UNLINKED)

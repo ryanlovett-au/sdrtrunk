@@ -45,7 +45,9 @@ import javafx.scene.layout.HBox;
  *
  * The title bar has a segmented toggle to show either the calls routed to console cards ("Console only") or all voice
  * calls ("All traffic"), including calls that are not on the console, which are de-emphasised (grey text, with the
- * IGNORED status in amber).  Invoke all methods on the JavaFX thread.
+ * IGNORED status in amber).  Calls on a console card show the card's console group with the talkgroup name, e.g.
+ * "Ops - TG 23 Primary", using the group the card is in when the log is displayed.  Invoke all methods on the JavaFX
+ * thread.
  */
 public class ActivityLogView extends TitledPane
 {
@@ -57,6 +59,7 @@ public class ActivityLogView extends TitledPane
 
     private final TableView<ConsoleActivityLogEntry> mTableView = new TableView<>();
     private final ToIntFunction<String> mInkColorLookup;
+    private final Function<String,String> mGroupNameLookup;
     private final ToggleGroup mModeToggleGroup = new ToggleGroup();
     private final ToggleButton mConsoleOnlyButton = new ToggleButton("Console only");
     private final ToggleButton mAllTrafficButton = new ToggleButton("All traffic");
@@ -69,11 +72,14 @@ public class ActivityLogView extends TitledPane
     /**
      * Constructs an instance
      * @param inkColorLookup provides the ink (text) RGB colour for a card identifier, or -1 for the default colour
+     * @param groupNameLookup provides the name of the console group that contains a card, or null
      * @param showAllListener notified when the user changes the log mode (true for all traffic)
      */
-    public ActivityLogView(ToIntFunction<String> inkColorLookup, Consumer<Boolean> showAllListener)
+    public ActivityLogView(ToIntFunction<String> inkColorLookup, Function<String,String> groupNameLookup,
+                           Consumer<Boolean> showAllListener)
     {
         mInkColorLookup = inkColorLookup;
+        mGroupNameLookup = groupNameLookup;
         setText("ACTIVITY LOG");
         getStyleClass().add("activity-log");
         setAnimated(false);
@@ -132,8 +138,9 @@ public class ActivityLogView extends TitledPane
             entry -> TIME_FORMATTER.format(Instant.ofEpochMilli(entry.timestamp())));
         time.setCellFactory(column -> styledCell("mono"));
         time.setMinWidth(96);
-        TableColumn<ConsoleActivityLogEntry,String> talkgroupName = column("Talkgroup", 200,
-            ConsoleActivityLogEntry::talkgroupName);
+        TableColumn<ConsoleActivityLogEntry,String> talkgroupName = column("Talkgroup", 260,
+            entry -> entry.getTalkgroupLabel(entry.isOnConsole() && mGroupNameLookup != null ?
+                mGroupNameLookup.apply(entry.cardId()) : null));
         talkgroupName.setCellFactory(column -> new TalkgroupCell());
         TableColumn<ConsoleActivityLogEntry,String> talkgroup = column("TG", 90, ConsoleActivityLogEntry::talkgroup);
         talkgroup.setCellFactory(column -> styledCell("mono"));
@@ -234,7 +241,7 @@ public class ActivityLogView extends TitledPane
     }
 
     /**
-     * Forces the log to refresh (e.g. after card colours change).
+     * Forces the log to refresh (e.g. after card colours or console group names change).
      */
     public void refresh()
     {

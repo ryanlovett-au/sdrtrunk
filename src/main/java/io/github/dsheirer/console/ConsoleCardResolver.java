@@ -26,8 +26,10 @@ import io.github.dsheirer.sample.Listener;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Resolves the console card (if any) for a call, based on the call's TO identifier and the alias list of the channel
@@ -37,6 +39,8 @@ import java.util.Map;
  * Patch group TO identifiers resolve to a card when the patch group or any patched talkgroup has a card, because
  * AliasList.getAliases() returns the aliases for the patch group and each patched talkgroup.
  *
+ * Audio mute: a card's audio is muted when the card is muted or when the card's group is muted (see isAudioMuted()).
+ *
  * Thread safe: lookups use an immutable snapshot that is rebuilt whenever the console layout changes, so lookups from
  * decoder threads never block on the layout manager.
  */
@@ -44,6 +48,7 @@ public class ConsoleCardResolver implements Listener<ConsoleLayoutEvent>
 {
     private final ConsoleLayoutManager mConsoleLayoutManager;
     private volatile Map<String,ConsoleCard> mCardsByAliasUuid = Collections.emptyMap();
+    private volatile Set<String> mGroupMutedCardIds = Collections.emptySet();
     private volatile boolean mConsoleModeEnabled;
     private volatile boolean mTalkgroupFilterEnabled;
 
@@ -79,6 +84,7 @@ public class ConsoleCardResolver implements Listener<ConsoleLayoutEvent>
     {
         ConsoleLayout layout = mConsoleLayoutManager.getLayout();
         Map<String,ConsoleCard> cards = new HashMap<>();
+        Set<String> groupMutedCardIds = new HashSet<>();
 
         for(ConsoleGroup group: layout.getGroups())
         {
@@ -88,10 +94,16 @@ public class ConsoleCardResolver implements Listener<ConsoleLayoutEvent>
                 {
                     cards.put(card.getAliasUuid(), card);
                 }
+
+                if(group.isMuted() && card.getId() != null)
+                {
+                    groupMutedCardIds.add(card.getId());
+                }
             }
         }
 
         mCardsByAliasUuid = Collections.unmodifiableMap(cards);
+        mGroupMutedCardIds = Collections.unmodifiableSet(groupMutedCardIds);
         mConsoleModeEnabled = layout.isConsoleModeEnabled();
         mTalkgroupFilterEnabled = layout.isTalkgroupFilterEnabled();
     }
@@ -110,6 +122,26 @@ public class ConsoleCardResolver implements Listener<ConsoleLayoutEvent>
     public boolean isFilterActive()
     {
         return mConsoleModeEnabled && mTalkgroupFilterEnabled;
+    }
+
+    /**
+     * Indicates if the card's group is muted.
+     * @param cardId of the card
+     * @return true if the card is in a muted group.
+     */
+    public boolean isGroupMuted(String cardId)
+    {
+        return cardId != null && mGroupMutedCardIds.contains(cardId);
+    }
+
+    /**
+     * Indicates if the card's audio is muted: the card is muted, or the card's group is muted.
+     * @param card to test
+     * @return true if no audio should be played for the card (false for a null card).
+     */
+    public boolean isAudioMuted(ConsoleCard card)
+    {
+        return card != null && (card.isMuted() || isGroupMuted(card.getId()));
     }
 
     /**

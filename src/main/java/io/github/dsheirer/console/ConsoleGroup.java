@@ -28,16 +28,22 @@ import java.util.UUID;
 /**
  * Named group of console cards.  Cards are displayed in list order and groups are displayed in display order.
  *
+ * A collapsed group is displayed as its header only (with a summary of the activity on its cards).  A muted group
+ * silences the audio of all of its cards: a card's effective audio mute is its own mute setting OR its group's mute
+ * setting, and the two settings are independent, so unmuting the group restores each card's own setting.
+ *
  * Note: this is a plain data object that is serialized as JSON.  Modifications should be made via the
  * ConsoleLayoutManager so that constraints are enforced and listeners are notified.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-@JsonPropertyOrder({"id", "name", "displayOrder", "cards"})
+@JsonPropertyOrder({"id", "name", "displayOrder", "collapsed", "muted", "cards"})
 public class ConsoleGroup
 {
     private String mId;
     private String mName;
     private int mDisplayOrder;
+    private boolean mCollapsed;
+    private boolean mMuted;
     private List<ConsoleCard> mCards = new ArrayList<>();
 
     /**
@@ -66,6 +72,8 @@ public class ConsoleGroup
         copy.setId(getId());
         copy.setName(getName());
         copy.setDisplayOrder(getDisplayOrder());
+        copy.setCollapsed(isCollapsed());
+        copy.setMuted(isMuted());
 
         for(ConsoleCard card: mCards)
         {
@@ -118,6 +126,35 @@ public class ConsoleGroup
     }
 
     /**
+     * Indicates if the group is collapsed: the console window shows the group header only.
+     */
+    @JsonProperty("collapsed")
+    public boolean isCollapsed()
+    {
+        return mCollapsed;
+    }
+
+    public void setCollapsed(boolean collapsed)
+    {
+        mCollapsed = collapsed;
+    }
+
+    /**
+     * Indicates if the group is muted: no audio is played for any of the group's cards, independent of each card's own
+     * mute setting.
+     */
+    @JsonProperty("muted")
+    public boolean isMuted()
+    {
+        return mMuted;
+    }
+
+    public void setMuted(boolean muted)
+    {
+        mMuted = muted;
+    }
+
+    /**
      * Cards in this group, in display order.
      */
     @JsonProperty("cards")
@@ -155,6 +192,7 @@ public class ConsoleGroup
     @Override
     public String toString()
     {
-        return "Console Group [" + getName() + "] id [" + getId() + "] cards [" + mCards.size() + "]";
+        return "Console Group [" + getName() + "] id [" + getId() + "] collapsed [" + isCollapsed() + "] muted [" +
+            isMuted() + "] cards [" + mCards.size() + "]";
     }
 }

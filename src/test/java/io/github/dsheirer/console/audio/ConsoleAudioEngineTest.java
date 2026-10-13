@@ -66,6 +66,7 @@ public class ConsoleAudioEngineTest
     private ConsoleCardResolver mConsoleCardResolver;
     private AliasList mAliasList;
     private ConsoleCard mCard;
+    private ConsoleGroup mGroup;
     private ConsoleAudioEngine mEngine;
     private final AtomicBoolean mSuppressDuplicates = new AtomicBoolean(true);
     private final List<ConsoleAudioLevels> mLevels = new ArrayList<>();
@@ -87,8 +88,8 @@ public class ConsoleAudioEngineTest
         mConsoleLayoutManager = new ConsoleLayoutManager(mTempDir.resolve(ConsoleLayoutManager.CONSOLE_DIRECTORY)
             .resolve(ConsoleLayoutManager.LAYOUT_FILE_NAME));
         mConsoleLayoutManager.load();
-        ConsoleGroup group = mConsoleLayoutManager.addGroup("Dispatch");
-        mCard = mConsoleLayoutManager.addCard(group.getId(), cardAlias.getUuid());
+        mGroup = mConsoleLayoutManager.addGroup("Dispatch");
+        mCard = mConsoleLayoutManager.addCard(mGroup.getId(), cardAlias.getUuid());
         mConsoleLayoutManager.setConsoleModeEnabled(true);
         mConsoleCardResolver = new ConsoleCardResolver(mConsoleLayoutManager);
 
@@ -266,6 +267,88 @@ public class ConsoleAudioEngineTest
 
         mEngine.releaseAll();
         assertEquals(1, segment.getDecrementCount(), "Expected no additional release");
+    }
+
+    @Test
+    void groupMuteSilencesCardAndUnmuteRestoresCardSetting()
+    {
+        CountingAudioSegment segment = segment(CARD_TALKGROUP);
+        addAudio(segment, 40);
+        mEngine.receive(segment);
+
+        frame();
+        assertEquals(LEVEL, peak(mLeft), 1e-6f, "Expected audio before the group is muted");
+
+        //Group mute applies live (ramped) without changing the card's own setting
+        mConsoleLayoutManager.setGroupMuted(mGroup.getId(), true);
+        frame();
+        assertEquals(0.0f, mLeft[FRAME - 1], 0.0f, "Expected silence at the end of the mute ramp");
+        assertTrue(mLeft[0] > 0.0f, "Expected the mute to be ramped (not a step)");
+        frame();
+        assertTrue(isSilent(), "Expected silence while the group is muted");
+        assertFalse(mConsoleLayoutManager.getCard(mCard.getId()).isMuted(),
+            "Expected the card's own mute setting unchanged");
+        assertEquals(1, mEngine.getVoiceCount(), "Expected the call to remain in the mixer");
+
+        //Unmuting the group restores audio for an unmuted card
+        mConsoleLayoutManager.setGroupMuted(mGroup.getId(), false);
+        frame();
+        frame();
+        assertEquals(LEVEL, peak(mLeft), 1e-6f, "Expected audio after the group is unmuted");
+
+        //A card that is muted itself stays muted when its group is unmuted
+        mConsoleLayoutManager.setCardMuted(mCard.getId(), true);
+        mConsoleLayoutManager.setGroupMuted(mGroup.getId(), true);
+        frame();
+        frame();
+        assertTrue(isSilent(), "Expected silence while the card and group are muted");
+        mConsoleLayoutManager.setGroupMuted(mGroup.getId(), false);
+        frame();
+        frame();
+        assertTrue(isSilent(), "Expected the card's own mute to remain after the group is unmuted");
+
+        mConsoleLayoutManager.setCardMuted(mCard.getId(), false);
+        frame();
+        frame();
+        assertEquals(LEVEL, peak(mLeft), 1e-6f, "Expected audio after the card is unmuted");
+        mEngine.releaseAll();
+    }
+
+    @Test
+    void groupMuteDoesNotAffectCardsInOtherGroups()
+    {
+        ConsoleGroup other = mConsoleLayoutManager.addGroup("Other");
+        mConsoleLayoutManager.setGroupMuted(other.getId(), true);
+        CountingAudioSegment segment = segment(CARD_TALKGROUP);
+        addAudio(segment, 40);
+        mEngine.receive(segment);
+        frame();
+        assertEquals(LEVEL, peak(mLeft), 1e-6f, "Expected audio for a card in an unmuted group");
+        mEngine.releaseAll();
+    }
+
+    @Test
+    void clearAudioAlertPlaysWhenGroupMuted()
+    {
+        mConsoleLayoutManager.setCardClearAudioAlert(mCard.getId(), ClearAudioAlert.ALWAYS);
+        mConsoleLayoutManager.setCardPan(mCard.getId(), AudioPan.LEFT);
+        mConsoleLayoutManager.setGroupMuted(mGroup.getId(), true);
+        List<String> alerts = playClearCall(1);
+        assertEquals(List.of(mCard.getId()), alerts, "Expected an alert for a card in a muted group");
+        assertEquals(1, mEngine.getAlertCount(), "Expected the alert tone to be playing");
+        assertTrue(peak(mLeft) > 0.1f, "Expected the alert tone on the card's (left) side while the group is muted");
+        assertEquals(0.0f, peak(mRight), 0.0f, "Expected nothing on the right side");
+
+        int toneFrames = (AlertTone.getClearAudioAlert().length + FRAME - 1) / FRAME;
+
+        for(int x = 0; x < toneFrames; x++)
+        {
+            frame();
+        }
+
+        assertEquals(0, mEngine.getAlertCount(), "Expected the alert tone to be complete");
+        assertTrue(isSilent(), "Expected the call to be silent while the group is muted");
+        mEngine.releaseAll();
     }
 
     @Test

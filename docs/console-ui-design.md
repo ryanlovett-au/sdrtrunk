@@ -98,22 +98,48 @@ Network configuration monitors ──► structured control channel snapshot ─
 ## Console window menus and header
 
 The console window has its own in-window menu bar (like the main window's Swing menu bar, not the macOS system menu
-bar), styled explicitly in `console.css` so the light menus keep dark text:
+bar). It is styled at runtime to look like the main window's Swing (FlatLaf) menus in the active theme:
+`gui.console.ConsoleMenuTheme` reads the FlatLaf `UIManager` values on the Swing thread (MenuBar/PopupMenu/MenuItem
+colours, accelerator and disabled colours, separator, check mark colour, popup corner radius and shadow, menu font and
+UI scale) and generates a stylesheet scoped to `.console-menu-bar` (including the label text nodes, which the dark
+JavaFX stylesheet styles directly). It is re-applied on application preference (theme) changes.
 
 - **File:** Traditional view (shows the main window), Exit.
-- **View:** Playlist Editor, Alias Sheet, User Preferences, Icon Manager, Message Recording Viewer (the same event bus
-  requests as the main window's View menu), then Application Log Files, Audio Recordings and Channel Event Log Files
-  (opened via `gui.DirectoryOpener`, shared with the main window). Main-window-only items (spectrum/waterfall, status
-  panels, tuners, screen capture, reports) are not repeated.
-- **Console:** Edit layout (Ctrl/Cmd+E, in sync with the header button), Add group…, Console mode, Follow only console
-  talkgroups, Activity hang time, Show all traffic in activity log, Alert on clear audio from encrypted talkgroups.
+- **View:** the main window's View menu items, labels, order and FontAwesome icons: Playlist Editor, Alias Sheet,
+  separator, Application Log Files, Audio Recordings, Channel Event Log Files, Icon Manager, Message Recording Viewer
+  (.bits), Screen Captures, User Preferences (folders opened via `gui.DirectoryOpener`). Radio Console (this window),
+  Tuners and the main window display options are not repeated. Icons are `jiconfont` `IconNode` glyphs coloured like
+  the item text (including hover/selection).
+- **Console:** Edit layout (Ctrl/Cmd+E, in sync with the header button), Add group…, Collapse all groups, Expand all
+  groups, Console mode, Follow only console talkgroups, Activity hang time, Show all traffic in activity log, Alert on
+  clear audio from encrypted talkgroups.
 
 The header keeps the title, the Edit layout button, the Console mode switch and the clock (wrapping at narrow widths).
+
+## Collapsible and muted groups
+
+Each group header has a chevron (collapse/expand) at the left and a group mute button (speaker icon, 44 px touch
+target) next to the active count, in normal and edit mode. Both states are persisted per group (`collapsed`, `muted` in
+the layout JSON, default false) via `ConsoleLayoutManager.setGroupCollapsed/setGroupMuted/setAllGroupsCollapsed`, which
+broadcast `GROUP_STATE_CHANGED` (the console window updates the group in place, without a rebuild).
+
+- **Collapsed:** only the header is shown. A second header row summarises the cards' activity
+  (`console.activity.ConsoleGroupActivity`): a badge in the featured card's fill colour (red for a clear audio alert)
+  with the card name and talker, e.g. "● 23 NR Emergency · 5710363", plus "+N more" for other live cards (RX, RX
+  MUTED, ENCRYPTED, CLEAR or HANG), and the existing "N ACTIVE" count. The featured card is a clear audio alert first,
+  then a call in progress, then a hanging call, then the most recent activity. Idle collapsed groups show
+  "N talkgroups · no activity". Cards dragged in edit mode can be dropped on a collapsed group.
+- **Muted:** a card's effective audio mute is its own mute OR its group's mute (`ConsoleCardResolver.isAudioMuted()`);
+  the flags are independent, so unmuting the group restores each card's own setting. The mixer ramps voices of cards in
+  a muted group to silence like a card mute; clear audio alert beeps still play. Cards in a muted group show RX MUTED
+  and a dashed red "Muted by group" mute button (the card's own setting is unchanged), and the activity log shows MUTED.
 
 ## Activity log: console only / all traffic
 
 The activity log title bar has a segmented "Console only | All traffic" toggle, persisted as `activityLogShowAll` in
-the console layout (default console only; also Console → Show all traffic in activity log). `ConsoleActivityRouter`
+the console layout (default console only; also Console → Show all traffic in activity log). Calls on a console card
+show the card's current group with the talkgroup name in the Talkgroup column, e.g. "Ops - TG 23 Primary"
+(`ConsoleActivityLogEntry.getTalkgroupLabel()`), so renaming a group or moving the card updates the rows. `ConsoleActivityRouter`
 keeps the console log (50 calls routed to cards) and an all-traffic log (200 entries) that adds the voice calls that do
 not resolve to a card. Both have one entry per call event, updated in place as the call progresses. Calls that are not
 on the console show the talkgroup alias name (or the TO identifier, including patch notation), are drawn in grey, and
@@ -137,8 +163,8 @@ Plays a short beep when a talkgroup that is normally encrypted carries clear aud
   that starts playing non-encrypted audio for a card treated as encrypted raises one alert per call. A grant without the
   encryption flag does not alert on its own.
 - **Alert:** a two-tone beep (880 Hz then 1320 Hz, 120 ms each with smooth envelopes, about -12 dBFS) mixed on the
-  card's pan side(s) through the output limiter, even when the card is muted. The card shows a red CLEAR status pill and
-  red border while the call is active or hanging, and the call's activity log entries show **CLEAR ⚠**.
+  card's pan side(s) through the output limiter, even when the card or its group is muted. The card shows a red CLEAR
+  status pill and red border while the call is active or hanging, and the call's activity log entries show **CLEAR ⚠**.
 - **Setting:** Console → Alert on clear audio from encrypted talkgroups (`clearAudioAlertEnabled`, default on).
 
 ## Decode quality

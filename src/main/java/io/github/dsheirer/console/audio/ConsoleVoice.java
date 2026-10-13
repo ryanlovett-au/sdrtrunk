@@ -148,7 +148,8 @@ public class ConsoleVoice implements Listener<IdentifierUpdateNotification>
     }
 
     /**
-     * Resolves the console card for the current segment and updates the voice gain target from the card settings.
+     * Resolves the console card for the current segment and updates the voice gain target from the card settings and
+     * the card's group mute setting.
      * @param resolver to find the card
      * @return resolved card or null.
      */
@@ -158,7 +159,7 @@ public class ConsoleVoice implements Listener<IdentifierUpdateNotification>
         mIdentifiersUpdated = false;
         AudioSegment segment = getCurrentSegment();
         mCard = segment != null ? resolver.getCard(segment.getAliasList(), segment.getIdentifierCollection()) : null;
-        mGain.setTarget(mStopping ? null : mCard);
+        mGain.setTarget(mStopping ? null : mCard, mCard != null && resolver.isGroupMuted(mCard.getId()));
         return mCard;
     }
 

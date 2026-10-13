@@ -360,4 +360,94 @@ public class ConsoleLayoutManagerTest
         assertEquals(1, manager.getLayout().getCardCount(), "Expected managed layout to be unchanged");
         manager.saveNow();
     }
+
+    @Test
+    void groupCollapsedAndMutedStatePersistsAndBroadcastsEvents() throws Exception
+    {
+        ConsoleLayoutManager manager = new ConsoleLayoutManager(getLayoutPath());
+        List<ConsoleLayoutEvent> events = new ArrayList<>();
+        manager.load();
+        ConsoleGroup fire = manager.addGroup("Fire");
+        ConsoleGroup police = manager.addGroup("Police");
+        ConsoleCard card = manager.addCard(fire.getId(), "alias-uuid-1");
+        manager.setCardMuted(card.getId(), true);
+        assertFalse(fire.isCollapsed(), "Default expanded");
+        assertFalse(fire.isMuted(), "Default not muted");
+        manager.addListener(events::add);
+
+        assertTrue(manager.setGroupCollapsed(fire.getId(), true), "Group found");
+        assertTrue(manager.setGroupCollapsed(fire.getId(), true), "Group found"); //No change - no event
+        assertTrue(manager.setGroupMuted(police.getId(), true), "Group found");
+        assertFalse(manager.setGroupMuted("missing", true), "Expected unknown group");
+        assertEquals(List.of(ConsoleLayoutEvent.Type.GROUP_STATE_CHANGED, ConsoleLayoutEvent.Type.GROUP_STATE_CHANGED),
+            events.stream().map(ConsoleLayoutEvent::getType).toList(), "Event sequence");
+        assertEquals(List.of(fire.getId(), police.getId()),
+            events.stream().map(ConsoleLayoutEvent::getGroupId).toList(), "Event group identifiers");
+        assertTrue(manager.getGroup(fire.getId()).isCollapsed(), "Collapsed");
+        assertTrue(manager.getGroup(police.getId()).isMuted(), "Muted");
+        assertTrue(manager.getCard(card.getId()).isMuted(), "Expected the card's own mute setting to be unchanged");
+
+        //Collapse all: one event for each group that changes
+        events.clear();
+        manager.setAllGroupsCollapsed(true);
+        assertEquals(List.of(police.getId()), events.stream().map(ConsoleLayoutEvent::getGroupId).toList(),
+            "Expected an event only for the group that was expanded");
+        manager.setAllGroupsCollapsed(false);
+        assertEquals(3, events.size(), "Expected an event for each expanded group");
+        assertFalse(manager.getLayout().getGroups().stream().anyMatch(ConsoleGroup::isCollapsed), "All expanded");
+
+        manager.setGroupCollapsed(fire.getId(), true);
+        assertTrue(manager.isSavePending(), "Expected a group state change to schedule a save");
+        manager.saveNow();
+        String json = Files.readString(getLayoutPath());
+        assertTrue(json.contains("\"collapsed\" : true"), "Expected collapsed in JSON: " + json);
+        assertTrue(json.contains("\"muted\" : true"), "Expected muted in JSON: " + json);
+
+        ConsoleLayoutManager reloaded = new ConsoleLayoutManager(getLayoutPath());
+        reloaded.load();
+        assertTrue(reloaded.getGroup(fire.getId()).isCollapsed(), "Collapsed after reload");
+        assertFalse(reloaded.getGroup(fire.getId()).isMuted(), "Not muted after reload");
+        assertFalse(reloaded.getGroup(police.getId()).isCollapsed(), "Expanded after reload");
+        assertTrue(reloaded.getGroup(police.getId()).isMuted(), "Muted after reload");
+        assertTrue(reloaded.getCard(card.getId()).isMuted(), "Card mute after reload");
+    }
+
+    @Test
+    void layoutWithoutGroupStateLoadsExpandedAndUnmuted() throws Exception
+    {
+        Files.createDirectories(getLayoutPath().getParent());
+        Files.writeString(getLayoutPath(), "{\"version\":1,\"groups\":[{\"id\":\"g1\",\"name\":\"Fire\"," +
+            "\"displayOrder\":0,\"cards\":[]}]}", StandardCharsets.UTF_8);
+        ConsoleLayoutManager manager = new ConsoleLayoutManager(getLayoutPath());
+        manager.load();
+        ConsoleGroup group = manager.getGroup("g1");
+        assertNotNull(group, "Group");
+        assertFalse(group.isCollapsed(), "Expected expanded by default");
+        assertFalse(group.isMuted(), "Expected not muted by default");
+        manager.shutdown();
+    }
+
+    @Test
+    void cardResolverAudioMuteCombinesCardAndGroupMute()
+    {
+        ConsoleLayoutManager manager = new ConsoleLayoutManager(getLayoutPath());
+        manager.load();
+        ConsoleGroup group = manager.addGroup("Fire");
+        ConsoleCard card = manager.addCard(group.getId(), "alias-uuid-1");
+        ConsoleCardResolver resolver = new ConsoleCardResolver(manager);
+
+        assertFalse(resolver.isAudioMuted(manager.getCard(card.getId())), "Not muted");
+        manager.setGroupMuted(group.getId(), true);
+        assertTrue(resolver.isGroupMuted(card.getId()), "Group muted");
+        assertTrue(resolver.isAudioMuted(manager.getCard(card.getId())), "Muted by group");
+        manager.setCardMuted(card.getId(), true);
+        manager.setGroupMuted(group.getId(), false);
+        assertFalse(resolver.isGroupMuted(card.getId()), "Group unmuted");
+        assertTrue(resolver.isAudioMuted(manager.getCard(card.getId())), "Expected the card's own mute to remain");
+        manager.setCardMuted(card.getId(), false);
+        assertFalse(resolver.isAudioMuted(manager.getCard(card.getId())), "Not muted");
+        assertFalse(resolver.isAudioMuted(null), "Null card");
+        resolver.dispose();
+        manager.saveNow();
+    }
 }

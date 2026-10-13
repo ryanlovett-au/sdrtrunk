@@ -29,9 +29,11 @@ import io.github.dsheirer.console.ConsoleLayoutEvent;
 import io.github.dsheirer.console.ConsoleLayoutManager;
 import io.github.dsheirer.console.activity.ConsoleActivityRouter;
 import io.github.dsheirer.console.activity.ConsoleActivitySnapshot;
+import io.github.dsheirer.console.activity.ConsoleGroupActivity;
 import io.github.dsheirer.console.ConsoleAliasDrop;
 import io.github.dsheirer.console.control.ControlChannelMonitor;
 import io.github.dsheirer.console.control.NetworkSiteDetailProvider;
+import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.ApplicationWindowRegistry;
 import io.github.dsheirer.gui.DirectoryOpener;
@@ -41,6 +43,7 @@ import io.github.dsheirer.gui.playlist.alias.sheet.ViewAliasSheetRequest;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.playlist.PlaylistManager;
+import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import java.awt.EventQueue;
@@ -88,7 +91,10 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
+import javafx.scene.text.Font;
 import javafx.util.Duration;
+import jiconfont.icons.font_awesome.FontAwesome;
+import jiconfont.javafx.IconNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -96,9 +102,10 @@ import org.slf4j.LoggerFactory;
  * Radio console window: a menu bar, a header (title, edit layout, console mode and clock), talkgroup
  * cards arranged in groups, a control channel strip, and an activity log.
  *
- * Menu bar: File (traditional view, exit), View (the application's other windows and data folders, as in the main
- * window's View menu) and Console (layout editing and console settings).  The menu bar is part of the window (not the
- * macOS system menu bar), like the main window's Swing menu bar.
+ * Menu bar: File (traditional view, exit), View (the application's other windows and data folders, in the same order
+ * and with the same icons as the main window's View menu) and Console (layout editing and console settings).  The menu
+ * bar is part of the window (not the macOS system menu bar), like the main window's Swing menu bar, and is styled from
+ * the active Swing (FlatLaf) theme (see ConsoleMenuTheme), updated when the theme changes.
  *
  * The window is a separate JavaFX stage that registers with the application window registry as a keep-alive window,
  * so closing the main window hides it (instead of exiting) while the console is showing, and closing the console
@@ -107,8 +114,8 @@ import org.slf4j.LoggerFactory;
  * Updates: card activity is pulled from the ConsoleActivityRouter as an immutable snapshot by a 10 Hz timeline while
  * the window is showing (call events are never dispatched to the JavaFX thread individually).  Console layout changes
  * are received from the ConsoleLayoutManager: card setting changes update the affected card and all other changes
- * (including LAYOUT_LOADED on playlist switch) rebuild the groups and cards.  Layout edits are applied via the
- * ConsoleLayoutManager.
+ * (including LAYOUT_LOADED on playlist switch) rebuild the groups and cards, except group collapsed/muted changes,
+ * which update the group in place.  Layout edits are applied via the ConsoleLayoutManager.
  *
  * Invoke all methods on the JavaFX application thread, except dispose() and isKeepAliveWindowShowing().
  */
@@ -132,6 +139,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     private final ControlChannelMonitor mControlChannelMonitor;
     private final UserPreferences mUserPreferences;
     private final Listener<ConsoleLayoutEvent> mLayoutListener = this::layoutChanged;
+    private final ThemeListener mThemeListener = new ThemeListener();
     private final ListChangeListener<Alias> mAliasListener = change -> mAliasesChanged = true;
     private final AtomicBoolean mRebuildPending = new AtomicBoolean();
     private final AtomicBoolean mSettingsPending = new AtomicBoolean();
@@ -139,6 +147,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     private final Map<String,ConsoleCardView> mCardViews = new LinkedHashMap<>();
     private volatile boolean mShowing;
     private String mStylesheet;
+    private String mMenuStylesheet;
     private Stage mStage;
     private Timeline mRefreshTimeline;
     private ConsoleLayout mLayout = new ConsoleLayout();
@@ -228,6 +237,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         mShowing = false;
         mApplicationWindowRegistry.unregisterKeepAliveWindow(this);
         mLayoutManager.removeListener(mLayoutListener);
+        MyEventBus.getGlobalEventBus().unregister(mThemeListener);
 
         Platform.runLater(() -> {
             mAliasModel.aliasList().removeListener(mAliasListener);
@@ -275,7 +285,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         //it is only as tall as the groups so that the activity log follows directly below the groups
         ScrollPane groupsScrollPane = createCenter();
         VBox.setVgrow(groupsScrollPane, Priority.ALWAYS);
-        mActivityLogView = new ActivityLogView(this::getInkColor, showAll -> {
+        mActivityLogView = new ActivityLogView(this::getInkColor, this::getGroupName, showAll -> {
             if(!mUpdatingSettings)
             {
                 mLayoutManager.setActivityLogShowAll(showAll);
@@ -329,6 +339,8 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
 
         mApplicationWindowRegistry.registerKeepAliveWindow(this);
         mLayoutManager.addListener(mLayoutListener);
+        MyEventBus.getGlobalEventBus().register(mThemeListener);
+        updateMenuTheme();
         mAliasModel.aliasList().addListener(mAliasListener);
         rebuild();
     }
@@ -345,20 +357,23 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         exitItem.setOnAction(event -> EventQueue.invokeLater(mApplicationWindowRegistry::exitApplication));
         Menu fileMenu = new Menu("_File", null, traditionalItem, new SeparatorMenuItem(), exitItem);
 
-        //View: the same application windows and folders as the main window's View menu
+        //View: the same application windows and folders, labels, order and icons as the main window's View menu
+        //(without the Radio Console, which is this window, and the main window's tuners and display options)
         Menu viewMenu = new Menu("_View", null,
-            requestItem("_Playlist Editor", ViewPlaylistRequest::new),
-            requestItem("_Alias Sheet", ViewAliasSheetRequest::new),
-            requestItem("_User Preferences", ViewUserPreferenceEditorRequest::new),
-            requestItem("_Icon Manager", ViewIconManagerRequest::new),
-            requestItem("_Message Recording Viewer (.bits)", ViewRecordingViewerRequest::new),
+            requestItem("Playlist Editor", FontAwesome.PLAY_CIRCLE_O, ViewPlaylistRequest::new),
+            requestItem("Alias Sheet", FontAwesome.TABLE, ViewAliasSheetRequest::new),
             new SeparatorMenuItem(),
-            directoryItem("Application _Log Files", () -> mUserPreferences.getDirectoryPreference()
+            directoryItem("Application Log Files", () -> mUserPreferences.getDirectoryPreference()
                 .getDirectoryApplicationLog().toFile()),
-            directoryItem("Audio _Recordings", () -> mUserPreferences.getDirectoryPreference()
+            directoryItem("Audio Recordings", () -> mUserPreferences.getDirectoryPreference()
                 .getDirectoryRecording().toFile()),
-            directoryItem("Channel _Event Log Files", () -> mUserPreferences.getDirectoryPreference()
-                .getDirectoryEventLog().toFile()));
+            directoryItem("Channel Event Log Files", () -> mUserPreferences.getDirectoryPreference()
+                .getDirectoryEventLog().toFile()),
+            requestItem("Icon Manager", FontAwesome.PICTURE_O, ViewIconManagerRequest::new),
+            requestItem("Message Recording Viewer (.bits)", FontAwesome.BRAILLE, ViewRecordingViewerRequest::new),
+            directoryItem("Screen Captures", () -> mUserPreferences.getDirectoryPreference()
+                .getDirectoryScreenCapture().toFile()),
+            requestItem("User Preferences", FontAwesome.COG, ViewUserPreferenceEditorRequest::new));
 
         //Console
         mEditMenuItem = new CheckMenuItem("_Edit layout");
@@ -366,6 +381,10 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         mEditMenuItem.setOnAction(event -> setEditMode(mEditMenuItem.isSelected()));
         MenuItem addGroupItem = new MenuItem("_Add group…");
         addGroupItem.setOnAction(event -> addGroup());
+        MenuItem collapseAllItem = new MenuItem("C_ollapse all groups");
+        collapseAllItem.setOnAction(event -> mLayoutManager.setAllGroupsCollapsed(true));
+        MenuItem expandAllItem = new MenuItem("E_xpand all groups");
+        expandAllItem.setOnAction(event -> mLayoutManager.setAllGroupsCollapsed(false));
 
         mConsoleModeMenuItem = new CheckMenuItem("_Console mode");
         mConsoleModeMenuItem.setOnAction(event -> mLayoutManager.setConsoleModeEnabled(
@@ -392,7 +411,12 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
             mClearAudioAlertMenuItem.isSelected()));
 
         Menu consoleMenu = new Menu("_Console", null, mEditMenuItem, addGroupItem, new SeparatorMenuItem(),
-            mConsoleModeMenuItem, mFilterMenuItem, hangTimeMenu, mShowAllTrafficMenuItem, mClearAudioAlertMenuItem);
+            collapseAllItem, expandAllItem, new SeparatorMenuItem(), mConsoleModeMenuItem, mFilterMenuItem,
+            hangTimeMenu, mShowAllTrafficMenuItem, mClearAudioAlertMenuItem);
+        consoleMenu.setOnShowing(event -> {
+            collapseAllItem.setDisable(mLayout.getGroups().stream().allMatch(ConsoleGroup::isCollapsed));
+            expandAllItem.setDisable(mLayout.getGroups().stream().noneMatch(ConsoleGroup::isCollapsed));
+        });
 
         MenuBar menuBar = new MenuBar(fileMenu, viewMenu, consoleMenu);
         menuBar.getStyleClass().add("console-menu-bar");
@@ -403,11 +427,57 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     /**
      * Creates a menu item that posts a window request on the global event bus.
      */
-    private static MenuItem requestItem(String text, Supplier<Object> request)
+    private static MenuItem requestItem(String text, FontAwesome icon, Supplier<Object> request)
     {
-        MenuItem item = new MenuItem(text);
+        MenuItem item = new MenuItem(text, createMenuIcon(icon));
         item.setOnAction(event -> MyEventBus.getGlobalEventBus().post(request.get()));
         return item;
+    }
+
+    /**
+     * Creates a menu item icon: a FontAwesome glyph (as used by the main window's Swing menus) that is coloured like
+     * the menu item text by the menu theme stylesheet.
+     */
+    private static IconNode createMenuIcon(FontAwesome icon)
+    {
+        IconNode iconNode = new IconNode(icon);
+        iconNode.setIconSize(ConsoleMenuTheme.ICON_SIZE);
+        iconNode.getStyleClass().add(ConsoleMenuTheme.ICON_STYLE_CLASS);
+        return iconNode;
+    }
+
+    /**
+     * Reads the menu theme from the Swing look and feel (on the Swing event dispatch thread) and applies it to the
+     * console menu bar (on the JavaFX application thread).
+     */
+    private void updateMenuTheme()
+    {
+        EventQueue.invokeLater(() -> {
+            ConsoleMenuTheme theme = ConsoleMenuTheme.fromUIManager();
+            Platform.runLater(() -> applyMenuTheme(theme));
+        });
+    }
+
+    /**
+     * Replaces the menu theme stylesheet of the console window's scene.
+     */
+    private void applyMenuTheme(ConsoleMenuTheme theme)
+    {
+        if(mStage == null || mStage.getScene() == null)
+        {
+            return;
+        }
+
+        List<String> families = Font.getFamilies();
+        String stylesheet = theme.toStylesheetUri(families::contains);
+
+        if(mMenuStylesheet != null)
+        {
+            mStage.getScene().getStylesheets().remove(mMenuStylesheet);
+        }
+
+        mMenuStylesheet = stylesheet;
+        mStage.getScene().getStylesheets().add(stylesheet);
     }
 
     /**
@@ -416,7 +486,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
      */
     private MenuItem directoryItem(String text, Supplier<File> directory)
     {
-        MenuItem item = new MenuItem(text);
+        MenuItem item = new MenuItem(text, createMenuIcon(FontAwesome.FOLDER_OPEN_O));
         item.setOnAction(event -> {
             File folder = directory.get();
             EventQueue.invokeLater(() -> {
@@ -553,6 +623,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
                     runOnFxThread(this::updateSettings);
                 }
             }
+            case GROUP_STATE_CHANGED -> runOnFxThread(() -> groupStateChanged(event.getGroupId()));
             default ->
             {
                 if(mRebuildPending.compareAndSet(false, true))
@@ -601,6 +672,35 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     }
 
     /**
+     * Updates the group view, its card views and the layout snapshot for a group collapsed or muted state change.
+     */
+    private void groupStateChanged(String groupId)
+    {
+        ConsoleGroup current = mLayoutManager.getGroup(groupId);
+        ConsoleGroupView groupView = mGroupViews.get(groupId);
+
+        if(current == null || groupView == null)
+        {
+            return;
+        }
+
+        //The group view holds the layout snapshot's group, so this also updates the layout snapshot
+        groupView.setGroupState(current.isCollapsed(), current.isMuted());
+
+        for(ConsoleCard card: groupView.getGroup().getCards())
+        {
+            ConsoleCardView cardView = mCardViews.get(card.getId());
+
+            if(cardView != null)
+            {
+                cardView.setGroupMuted(current.isMuted());
+            }
+        }
+
+        updateActivity(mActivityRouter.getSnapshot());
+    }
+
+    /**
      * Rebuilds the groups and cards from a snapshot of the console layout.
      */
     private void rebuild()
@@ -628,6 +728,7 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
                 ConsoleCardView cardView = new ConsoleCardView(this, card, group.getId());
                 cardView.setAliasInfo(getAliasInfo(card));
                 cardView.setEditMode(mEditMode);
+                cardView.setGroupMuted(group.isMuted());
                 mCardViews.put(card.getId(), cardView);
                 cardViews.add(cardView);
             }
@@ -803,7 +904,8 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     }
 
     /**
-     * Applies the activity snapshot to the cards, group active counts and the activity log.
+     * Applies the activity snapshot to the cards, group active counts, collapsed group activity summaries and the
+     * activity log.
      */
     private void updateActivity(ConsoleActivitySnapshot snapshot)
     {
@@ -831,10 +933,36 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
                 }
 
                 groupView.setActiveCount(active);
+
+                if(group.isCollapsed())
+                {
+                    ConsoleGroupActivity summary = ConsoleGroupActivity.of(group.getCards().stream()
+                        .map(ConsoleCard::getId).toList(), snapshot, this::getCardName, this::isCardAudioMuted);
+                    ConsoleCardView featured = summary.cardId() != null ? mCardViews.get(summary.cardId()) : null;
+                    groupView.setActivity(summary, featured != null ? featured.getBaseColor() : 0);
+                }
             }
         }
 
         mActivityLogView.update(snapshot);
+    }
+
+    /**
+     * Display name of the card, or null when the card is not on the console.
+     */
+    private String getCardName(String cardId)
+    {
+        ConsoleCardView cardView = mCardViews.get(cardId);
+        return cardView != null ? cardView.getName() : null;
+    }
+
+    /**
+     * Indicates if the card's audio is muted, by the card or by its group.
+     */
+    private boolean isCardAudioMuted(String cardId)
+    {
+        ConsoleCardView cardView = mCardViews.get(cardId);
+        return cardView != null && cardView.isAudioMuted();
     }
 
     /**
@@ -905,6 +1033,15 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
     {
         ConsoleCardView cardView = mCardViews.get(cardId);
         return cardView != null ? ConsoleCardColors.getInkColor(cardView.getBaseColor()) : -1;
+    }
+
+    /**
+     * Name of the console group that contains the card in the current layout snapshot, or null.
+     */
+    private String getGroupName(String cardId)
+    {
+        ConsoleGroup group = mLayout.getGroupForCard(cardId);
+        return group != null ? group.getName() : null;
     }
 
     /**
@@ -1125,5 +1262,21 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         alert.setTitle("Radio Console");
         alert.setHeaderText(header);
         alert.showAndWait();
+    }
+
+    /**
+     * Guava event bus listener for application preference changes, which include theme changes: the menu theme is
+     * re-read after the theme manager has installed the new look and feel.
+     */
+    public class ThemeListener
+    {
+        @Subscribe
+        public void preferenceUpdated(PreferenceType preferenceType)
+        {
+            if(preferenceType == PreferenceType.APPLICATION)
+            {
+                updateMenuTheme();
+            }
+        }
     }
 }

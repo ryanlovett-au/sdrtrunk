@@ -80,6 +80,7 @@ public class ConsoleActivityRouterTest
     private ConsoleActivityRouter mRouter;
     private ConsoleCard mFireDispatchCard;
     private ConsoleCard mFiregroundCard;
+    private ConsoleGroup mFireGroup;
 
     @BeforeEach
     void setup()
@@ -94,9 +95,9 @@ public class ConsoleActivityRouterTest
         mManager.setAliasModel(mAliasModel);
         mManager.load();
         mManager.setActivityHangTimeMs(HANG_TIME_MS);
-        ConsoleGroup group = mManager.addGroup("Fire");
-        mFireDispatchCard = mManager.addCard(group.getId(), mFireDispatch.getUuid());
-        mFiregroundCard = mManager.addCard(group.getId(), mFireground.getUuid());
+        mFireGroup = mManager.addGroup("Fire");
+        mFireDispatchCard = mManager.addCard(mFireGroup.getId(), mFireDispatch.getUuid());
+        mFiregroundCard = mManager.addCard(mFireGroup.getId(), mFireground.getUuid());
         mResolver = new ConsoleCardResolver(mManager);
         mRouter = new ConsoleActivityRouter(mManager, mResolver, mAliasModel, mClock::get, CALL_TIMEOUT_MS);
     }
@@ -439,6 +440,41 @@ public class ConsoleActivityRouterTest
         mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_2, mClock.get()));
         assertEquals(CardActivityState.ACTIVE, state(mFireDispatchCard), "Expected muted card to show activity");
         assertEquals(ConsoleActivityLogEntry.Status.MUTED, mRouter.getSnapshot().log().getFirst().status());
+    }
+
+    @Test
+    void cardInMutedGroupIsLoggedAsMuted()
+    {
+        mManager.setGroupMuted(mFireGroup.getId(), true);
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_2, mClock.get()));
+        assertEquals(CardActivityState.ACTIVE, state(mFireDispatchCard),
+            "Expected the card in the muted group to show activity");
+        assertEquals(ConsoleActivityLogEntry.Status.MUTED, mRouter.getSnapshot().log().getFirst().status());
+
+        //A new call after the group is unmuted plays audio (the card itself is not muted)
+        mManager.setGroupMuted(mFireGroup.getId(), false);
+        advance(CALL_TIMEOUT_MS + HANG_TIME_MS + 1);
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_3, mClock.get()));
+        assertEquals(ConsoleActivityLogEntry.Status.AUDIO, mRouter.getSnapshot().log().getFirst().status());
+    }
+
+    @Test
+    void talkgroupLabelIncludesConsoleGroupForCallsOnTheConsole()
+    {
+        mManager.setTalkgroupFilterEnabled(false);
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_ON_CARD, RADIO_2, mClock.get()));
+        mRouter.receive(call(DecodeEventType.CALL_GROUP, TALKGROUP_OFF_CARD, RADIO_3, mClock.get()));
+        List<ConsoleActivityLogEntry> all = mRouter.getSnapshot().allTrafficLog();
+        ConsoleActivityLogEntry onConsole = all.stream().filter(ConsoleActivityLogEntry::isOnConsole).findFirst()
+            .orElseThrow();
+        ConsoleActivityLogEntry offConsole = all.stream().filter(entry -> !entry.isOnConsole()).findFirst()
+            .orElseThrow();
+
+        assertEquals("Fire - Fire Dispatch", onConsole.getTalkgroupLabel("Fire"), "Group and talkgroup name");
+        assertEquals("Ops - Fire Dispatch", onConsole.getTalkgroupLabel("Ops"), "Expected the current group name");
+        assertEquals("Fire Dispatch", onConsole.getTalkgroupLabel(null), "Expected the name when the group is unknown");
+        assertEquals("Police Dispatch", offConsole.getTalkgroupLabel("Fire"),
+            "Expected only the talkgroup name for calls that are not on the console");
     }
 
     @Test

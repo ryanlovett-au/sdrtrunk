@@ -47,9 +47,10 @@ import org.slf4j.LoggerFactory;
  *
  * Each frame: new audio segments are taken from the intake queue (linked continuations join the voice that is
  * playing the preceding segment, otherwise a new voice is created), cards are (re)resolved for voices whose identifiers
- * changed or after a layout change, each voice is read and mixed with its card's gain and pan, finished or stopped
- * voices are released, and the output buses are limited.  Per-card and per-channel levels are accumulated and handed
- * to the level listener every LEVEL_INTERVAL_FRAMES frames.
+ * changed or after a layout change, each voice is read and mixed with its card's gain and pan (silent when the card or
+ * the card's group is muted, see ConsoleCardResolver.isAudioMuted()), finished or stopped voices are released, and the
+ * output buses are limited.  Per-card and per-channel levels are accumulated and handed to the level listener every
+ * LEVEL_INTERVAL_FRAMES frames.
  *
  * Calls are not played (and their segments are released) when flagged as do-not-monitor, encrypted, or duplicate
  * while duplicate playback suppression is enabled.  These checks are repeated every frame because the flags can change
@@ -58,8 +59,8 @@ import org.slf4j.LoggerFactory;
  * Clear audio (encryption slip) alert: when enabled, a voice that starts playing clear (non-encrypted) audio for a card
  * whose talkgroup is treated as normally encrypted (ConsoleCard.isTreatedAsEncrypted()) raises an alert once per voice
  * (i.e. once per call, including its linked continuation segments): the two-tone AlertTone is mixed on the card's pan
- * side(s), even when the card is muted, and the alert listener is notified with the card identifier.  Encrypted
- * segments never become voices, so any voice that plays audio is clear audio.
+ * side(s), even when the card or its group is muted, and the alert listener is notified with the card identifier.
+ * Encrypted segments never become voices, so any voice that plays audio is clear audio.
  *
  * Consumer counting: the engine owns the consumer count that the audio segment broadcaster increments for this
  * listener.  Each received segment's count is decremented exactly once: when it is discarded, or by the voice that

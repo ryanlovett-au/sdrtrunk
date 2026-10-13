@@ -25,85 +25,8 @@
 
 /* ---------------------------------------------------------------- Menu bar */
 
-/* Self-contained menu bar styling: dark text on light menus, regardless of the header and root label rules (menu
-   popups inherit the styles of their owner's ancestors) */
-.console-menu-bar {
-    -fx-background-color: #E4E8ED;
-    -fx-border-color: transparent transparent #9AA5B2 transparent;
-    -fx-padding: 0 12 0 12;
-}
-
-.console-menu-bar > .container > .menu-button {
-    -fx-background-color: transparent;
-    -fx-background-radius: 0;
-    -fx-padding: 4 10 4 10;
-}
-
-.console-menu-bar > .container > .menu-button > .label {
-    -fx-text-fill: #10233A;
-    -fx-font-size: 13px;
-}
-
-.console-menu-bar > .container > .menu-button:hover,
-.console-menu-bar > .container > .menu-button:focused,
-.console-menu-bar > .container > .menu-button:showing {
-    -fx-background-color: #14365E;
-}
-
-.console-menu-bar > .container > .menu-button:hover > .label,
-.console-menu-bar > .container > .menu-button:focused > .label,
-.console-menu-bar > .container > .menu-button:showing > .label {
-    -fx-text-fill: #FFFFFF;
-}
-
-.console-menu-bar .context-menu {
-    -fx-background-color: #FFFFFF;
-    -fx-border-color: #9AA5B2;
-    -fx-padding: 4 0 4 0;
-}
-
-.console-menu-bar .context-menu .menu-item {
-    -fx-background-color: transparent;
-    -fx-padding: 5 16 5 12;
-}
-
-.console-menu-bar .context-menu .menu-item .label {
-    -fx-text-fill: #10233A;
-    -fx-font-size: 13px;
-}
-
-.console-menu-bar .context-menu .menu-item .accelerator-text {
-    -fx-text-fill: #4A5868;
-}
-
-.console-menu-bar .context-menu .menu-item:focused {
-    -fx-background-color: #14365E;
-}
-
-.console-menu-bar .context-menu .menu-item:focused .label,
-.console-menu-bar .context-menu .menu-item:focused .accelerator-text {
-    -fx-text-fill: #FFFFFF;
-}
-
-.console-menu-bar .context-menu .check-menu-item:checked > .left-container > .check,
-.console-menu-bar .context-menu .radio-menu-item:checked > .left-container > .radio,
-.console-menu-bar .context-menu .menu > .right-container > .arrow {
-    -fx-background-color: #10233A;
-}
-
-.console-menu-bar .context-menu .check-menu-item:focused:checked > .left-container > .check,
-.console-menu-bar .context-menu .radio-menu-item:focused:checked > .left-container > .radio,
-.console-menu-bar .context-menu .menu:focused > .right-container > .arrow {
-    -fx-background-color: #FFFFFF;
-}
-
-.console-menu-bar .context-menu .separator:horizontal .line {
-    -fx-border-color: #DDE2E8 transparent transparent transparent;
-}
-
-.console-menu-bar .context-menu .menu-item:disabled .label {
-    -fx-text-fill: #9AA5B2;
-}
+/* The menu bar and its menus are styled at runtime from the active Swing (FlatLaf) theme, so that they look like the
+   main window's menus (see ConsoleMenuTheme). */
 
 /* ---------------------------------------------------------------- Header */
 
@@ -320,9 +243,17 @@
 .group-header {
     -fx-background-color: #14365E;
     -fx-background-radius: 3 3 0 0;
-    -fx-padding: 8 10 8 10;
-    -fx-spacing: 8;
-    -fx-alignment: center-left;
+    -fx-padding: 4 8 4 4;
+    -fx-spacing: 2;
+}
+
+/* A collapsed group is its header only */
+.group.collapsed .group-header {
+    -fx-background-radius: 3;
+}
+
+.group.drop-target {
+    -fx-border-color: #FFC069;
 }
 
 .group-header .label {
@@ -359,6 +290,103 @@
 
 .group-edit-button:disabled {
     -fx-opacity: 0.35;
+}
+
+/* Collapse chevron (▾ expanded / ▸ collapsed) at the left of the group header */
+.group-collapse-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 6;
+    -fx-border-color: transparent;
+    -fx-border-radius: 6;
+    -fx-min-width: 36;
+    -fx-pref-width: 36;
+    -fx-min-height: 44;
+    -fx-pref-height: 44;
+    -fx-padding: 0;
+    -fx-cursor: hand;
+}
+
+.group-collapse-button:hover {
+    -fx-background-color: #1E4373;
+}
+
+.group-collapse-button:focused {
+    -fx-border-color: #FFC069;
+}
+
+.group-chevron-icon {
+    -fx-fill: transparent;
+    -fx-stroke: #FFFFFF;
+    -fx-stroke-width: 2.6;
+    -fx-stroke-line-cap: round;
+    -fx-stroke-line-join: round;
+}
+
+/* Group mute: same 44 px touch target and speaker icons as the card mute button, styled for the navy header */
+.group-mute-button {
+    -fx-min-width: 44;
+    -fx-pref-width: 44;
+    -fx-max-width: 44;
+    -fx-min-height: 44;
+    -fx-pref-height: 44;
+    -fx-max-height: 44;
+    -fx-padding: 0;
+    -fx-background-color: transparent;
+    -fx-background-radius: 6;
+    -fx-border-color: #5C7899;
+    -fx-border-radius: 6;
+    -fx-cursor: hand;
+}
+
+.group-mute-button:hover {
+    -fx-background-color: #1E4373;
+}
+
+.group-mute-button:selected {
+    -fx-background-color: #B42318;
+    -fx-border-color: #FFB4AB;
+}
+
+.group-mute-button:focused {
+    -fx-border-color: #FFC069;
+    -fx-border-width: 2;
+}
+
+.group-mute-icon {
+    -fx-fill: transparent;
+    -fx-stroke: #FFFFFF;
+    -fx-stroke-width: 2;
+    -fx-stroke-line-cap: round;
+    -fx-stroke-line-join: round;
+}
+
+/* Collapsed group activity summary row (aligned with the group name) */
+.group-summary {
+    -fx-padding: 0 0 4 40;
+    -fx-min-height: 24;
+}
+
+/* Badge fill and text colour are applied inline (the featured card's fill, or red for a clear audio alert) */
+.group-summary-badge {
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-padding: 2 9 2 7;
+}
+
+.group-header .label.group-summary-text {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+
+.group-header .label.group-summary-more {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #FFC069;
+}
+
+.group-header .label.group-summary-idle {
+    -fx-font-size: 12px;
+    -fx-text-fill: #C9D6E6;
 }
 
 .group-cards {
@@ -519,6 +547,18 @@
 
 .mute-button:selected .mute-icon {
     -fx-stroke: #FFFFFF;
+}
+
+/* Muted by the card's group (the card's own mute setting is off) */
+.mute-button.group-muted,
+.card.live .mute-button.group-muted {
+    -fx-background-color: #FDECEA;
+    -fx-border-color: #B42318;
+    -fx-border-style: segments(4, 3);
+}
+
+.mute-button.group-muted .mute-icon {
+    -fx-stroke: #B42318;
 }
 
 .pan-group {

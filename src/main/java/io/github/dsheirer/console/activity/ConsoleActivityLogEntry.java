@@ -48,6 +48,28 @@ public record ConsoleActivityLogEntry(long id, long timestamp, String cardId, St
     }
 
     /**
+     * Separator between the console group name and the talkgroup name in the talkgroup label.
+     */
+    public static final String GROUP_SEPARATOR = " - ";
+
+    /**
+     * Talkgroup label for the activity log: for calls on a console card, the name of the card's (current) console group
+     * and the talkgroup name, e.g. "Ops - TG 23 Primary", otherwise the talkgroup name.
+     * @param groupName of the console group that contains the call's card, or null when unknown
+     * @return label, or null when the entry has no talkgroup name and is not labelled with a group.
+     */
+    public String getTalkgroupLabel(String groupName)
+    {
+        if(isOnConsole() && groupName != null && !groupName.isBlank())
+        {
+            String name = talkgroupName != null ? talkgroupName : (talkgroup != null ? talkgroup : "");
+            return groupName + GROUP_SEPARATOR + name;
+        }
+
+        return talkgroupName;
+    }
+
+    /**
      * Audio status of a logged call
      */
     public enum Status
@@ -57,7 +79,7 @@ public record ConsoleActivityLogEntry(long id, long timestamp, String cardId, St
          */
         AUDIO("AUDIO"),
         /**
-         * On the console: the card is muted
+         * On the console: the card (or the card's group) is muted
          */
         MUTED("MUTED"),
         /**

@@ -1075,6 +1075,89 @@ public class ConsoleLayoutManager
     }
 
     /**
+     * Sets the group collapsed state (the console window shows a collapsed group's header only).  Broadcasts a
+     * GROUP_STATE_CHANGED event when the state changes.
+     * @param groupId to update
+     * @param collapsed state
+     * @return true if the group was found.
+     */
+    public boolean setGroupCollapsed(String groupId, boolean collapsed)
+    {
+        return updateGroup(groupId, group -> group.isCollapsed() != collapsed, group -> group.setCollapsed(collapsed));
+    }
+
+    /**
+     * Sets the collapsed state of every group.  Broadcasts a GROUP_STATE_CHANGED event for each group that changes.
+     * @param collapsed state
+     */
+    public void setAllGroupsCollapsed(boolean collapsed)
+    {
+        List<ConsoleLayoutEvent> events = new ArrayList<>();
+
+        synchronized(this)
+        {
+            for(ConsoleGroup group: mLayout.getGroups())
+            {
+                if(group.isCollapsed() != collapsed)
+                {
+                    group.setCollapsed(collapsed);
+                    events.add(new ConsoleLayoutEvent(ConsoleLayoutEvent.Type.GROUP_STATE_CHANGED, group.getId(),
+                        null));
+                }
+            }
+        }
+
+        if(!events.isEmpty())
+        {
+            changed(events);
+        }
+    }
+
+    /**
+     * Sets the group muted state.  A muted group silences the audio of all of its cards without changing each card's
+     * own mute setting (see ConsoleCardResolver.isAudioMuted()).  Broadcasts a GROUP_STATE_CHANGED event when the
+     * state changes.
+     * @param groupId to update
+     * @param muted state
+     * @return true if the group was found.
+     */
+    public boolean setGroupMuted(String groupId, boolean muted)
+    {
+        return updateGroup(groupId, group -> group.isMuted() != muted, group -> group.setMuted(muted));
+    }
+
+    /**
+     * Applies the update to the group when the group is found and the update applies, and broadcasts a
+     * GROUP_STATE_CHANGED event when the group was updated.
+     * @param groupId to update
+     * @param applies test of whether the update changes the group
+     * @param update to apply
+     * @return true if the group was found.
+     */
+    private boolean updateGroup(String groupId, Predicate<ConsoleGroup> applies, Consumer<ConsoleGroup> update)
+    {
+        synchronized(this)
+        {
+            ConsoleGroup group = mLayout.getGroup(groupId);
+
+            if(group == null)
+            {
+                return false;
+            }
+
+            if(!applies.test(group))
+            {
+                return true;
+            }
+
+            update.accept(group);
+        }
+
+        changed(new ConsoleLayoutEvent(ConsoleLayoutEvent.Type.GROUP_STATE_CHANGED, groupId, null));
+        return true;
+    }
+
+    /**
      * Moves the group to the specified display index, shifting the other groups.
      * @param groupId to move
      * @param index for the group, constrained to the valid range.

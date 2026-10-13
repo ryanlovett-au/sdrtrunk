@@ -590,9 +590,9 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
     }
 
     /**
-     * Log status for the call.
+     * Log status for the call.  Calls on a card are MUTED when the card or the card's group is muted.
      */
-    private static ConsoleActivityLogEntry.Status getStatus(CallTrack call, ConsoleCard card, CallDetails details)
+    private ConsoleActivityLogEntry.Status getStatus(CallTrack call, ConsoleCard card, CallDetails details)
     {
         if(card != null)
         {
@@ -606,7 +606,8 @@ public class ConsoleActivityRouter implements Listener<IDecodeEvent>
                 return ConsoleActivityLogEntry.Status.ENCRYPTED;
             }
 
-            return card.isMuted() ? ConsoleActivityLogEntry.Status.MUTED : ConsoleActivityLogEntry.Status.AUDIO;
+            return mConsoleCardResolver.isAudioMuted(card) ? ConsoleActivityLogEntry.Status.MUTED :
+                ConsoleActivityLogEntry.Status.AUDIO;
         }
 
         if(details.encrypted())

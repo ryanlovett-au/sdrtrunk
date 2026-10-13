@@ -49,6 +49,10 @@ public class ConsoleLayoutEvent
          */
         GROUP_CHANGED,
         /**
+         * Group collapsed or muted state changed.  Listeners can update the group in place (no rebuild is needed).
+         */
+        GROUP_STATE_CHANGED,
+        /**
          * Group display order changed.
          */
         GROUPS_REORDERED,

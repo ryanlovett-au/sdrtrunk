@@ -82,9 +82,20 @@ public class VoiceGain
      */
     public void setTarget(ConsoleCard card)
     {
+        setTarget(card, false);
+    }
+
+    /**
+     * Sets the target gain from the card, or silences the voice when the card is null.
+     * @param card with audio settings, or null
+     * @param groupMuted true when the card's group is muted, which silences the voice regardless of the card's own
+     * mute setting
+     */
+    public void setTarget(ConsoleCard card, boolean groupMuted)
+    {
         if(card != null)
         {
-            setTarget(card.getVolume(), card.isMuted(), card.getPan());
+            setTarget(card.getVolume(), card.isMuted() || groupMuted, card.getPan());
         }
         else
         {
