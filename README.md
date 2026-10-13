@@ -1,3 +1,21 @@
+# sdrtrunk with Radio Console (modified version)
+
+This repository is a modified version of [sdrtrunk](https://github.com/dsheirer/sdrtrunk) by Dennis Sheirer,
+maintained by Ryan Lovett. Modifications began in October 2026 and add:
+
+- **Radio Console** (View > Radio Console): a dispatch-console view with talkgroup cards arranged in groups, per
+  talkgroup volume, mute and left/both/right speaker routing, a console audio mixer, control channel status, an
+  activity log and a clear-audio alert for encrypted talkgroups. Talkgroups that are not on the console can be
+  ignored entirely (no traffic channel is allocated).
+- **Alias Sheet** (View > Alias Sheet): a spreadsheet-style alias editor with paste from Excel/Google Sheets,
+  fill-down, undo, CSV import/export and paste from RadioReference talkgroup tables.
+
+The design and implementation notes are in [docs/console-ui-design.md](docs/console-ui-design.md). This modified
+version is distributed under the same GNU General Public License v3 as sdrtrunk; see [LICENSE](LICENSE). The
+original sdrtrunk README follows.
+
+---
+
 ![Gradle Build](https://github.com/dsheirer/sdrtrunk/actions/workflows/gradle.yml/badge.svg)
 ![Nightly Release](https://github.com/dsheirer/sdrtrunk/actions/workflows/nightly.yml/badge.svg)
 
