@@ -28,10 +28,10 @@ public enum AliasSheetColumn
 {
     ALIAS_LIST("Alias list", "list", "aliaslist"),
     GROUP("Group", "aliasgroup"),
-    NAME("Name", "alias", "aliasname"),
+    NAME("Alias", "name", "aliasname"),
     PROTOCOL("Protocol"),
     TALKGROUP("Talkgroup", "tg", "tgid", "talkgroupid"),
-    COLOUR("Colour", "color"),
+    COLOUR("Color", "colour"),
     ICON("Icon", "iconname"),
     LISTEN("Listen", "priority", "playbackpriority", "monitor"),
     RECORD("Record", "recordable"),

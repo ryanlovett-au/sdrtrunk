@@ -38,6 +38,7 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.console.AliasDragFormat;
 import io.github.dsheirer.gui.playlist.alias.ViewAliasRequest;
 import io.github.dsheirer.icon.Icon;
+import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.protocol.Protocol;
 import java.io.File;
@@ -253,54 +254,56 @@ public class AliasSheetEditor extends BorderPane
      */
     private HBox getToolbar()
     {
-        Label title = new Label("Aliases");
-        title.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
-
-        Label listLabel = new Label("Alias list");
+        //Plain text controls with the default (Modena) styling, as in the playlist editor's alias table
+        Label listLabel = new Label("Alias List");
 
         mSearchField = TextFields.createClearableTextField();
-        mSearchField.setPromptText("Search name, TG, group");
-        mSearchField.setPrefColumnCount(18);
+        mSearchField.setPromptText("Alias, TG, group");
+        mSearchField.setPrefColumnCount(16);
         mSearchField.textProperty().addListener((observable, oldValue, newValue) -> updateFilter());
 
-        Button addRowButton = button("Add row", FontAwesome.PLUS, "Add a new alias to the selected alias list",
-            this::addRow);
-        Button deleteButton = button("Delete rows", FontAwesome.TRASH, "Delete the aliases in the selected rows",
+        Button addRowButton = button("Add Row", "Add a new alias to the selected alias list", this::addRow);
+        Button deleteButton = button("Delete Rows", "Delete the aliases in the selected rows",
             this::deleteSelectedRows);
-        Button fillDownButton = button("Fill down", FontAwesome.ARROW_DOWN, "Copy the top value of the selection " +
-            "down (Ctrl/⌘+D)", this::fillDown);
-        mUndoButton = button("Undo", FontAwesome.UNDO, null, this::undo);
-        mRedoButton = button("Redo", FontAwesome.REPEAT, null, this::redo);
-        Button importButton = button("Import CSV", FontAwesome.UPLOAD, "Import aliases from a CSV file", this::importCsv);
-        Button radioReferenceButton = button("Paste from RadioReference…", FontAwesome.CLIPBOARD, "Import " +
-            "talkgroups copied from a RadioReference.com talkgroup table.\nSelect the table rows in your browser, " +
-            "copy, then click here (or paste into the sheet).", this::pasteFromRadioReference);
-        Button exportButton = button("Export CSV", FontAwesome.DOWNLOAD, "Export the aliases shown in the sheet to a " +
-            "CSV file", this::exportCsv);
+        Button fillDownButton = button("Fill Down", "Copy the top value of the selection down (Ctrl/⌘+D)",
+            this::fillDown);
+        mUndoButton = button("Undo", null, this::undo);
+        mRedoButton = button("Redo", null, this::redo);
 
-        MenuButton consoleButton = new MenuButton("Add selected to console");
-        consoleButton.setGraphic(new IconNode(FontAwesome.TH_LARGE));
+        //Less frequently used actions
+        MenuItem radioReferenceItem = new MenuItem("Paste from RadioReference…");
+        radioReferenceItem.setOnAction(event -> pasteFromRadioReference());
+        MenuItem importItem = new MenuItem("Import CSV…");
+        importItem.setOnAction(event -> importCsv());
+        MenuItem exportItem = new MenuItem("Export CSV…");
+        exportItem.setOnAction(event -> exportCsv());
+        MenuButton importExportButton = new MenuButton("Import / Export", null, radioReferenceItem,
+            new SeparatorMenuItem(), importItem, exportItem);
+        importExportButton.setTooltip(new Tooltip("Paste talkgroups copied from a RadioReference.com talkgroup " +
+            "table, or import/export the aliases as a CSV file"));
+
+        MenuButton consoleButton = new MenuButton("Add Selected to Console");
         consoleButton.setTooltip(new Tooltip("Assign the aliases in the selected rows to a console group.\nYou can " +
             "also drag a selection onto a group in the console window."));
         consoleButton.setOnShowing(event -> populateConsoleMenu(consoleButton));
         populateConsoleMenu(consoleButton);
         consoleButton.setDisable(mModel.getConsoleLayoutManager() == null);
 
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Label searchLabel = new Label("Search");
+        HBox searchBox = new HBox(5, searchLabel, mSearchField);
+        searchBox.setAlignment(Pos.CENTER_RIGHT);
+        HBox.setHgrow(searchBox, Priority.ALWAYS);
 
-        HBox toolbar = new HBox(8, title, listLabel, getAliasListComboBox(), mSearchField, spacer, addRowButton,
-            deleteButton, fillDownButton, mUndoButton, mRedoButton, importButton, radioReferenceButton, exportButton,
-            consoleButton);
+        HBox toolbar = new HBox(5, listLabel, getAliasListComboBox(), addRowButton, deleteButton, fillDownButton,
+            mUndoButton, mRedoButton, importExportButton, consoleButton, searchBox);
         toolbar.setAlignment(Pos.CENTER_LEFT);
         toolbar.setPadding(new Insets(10));
         return toolbar;
     }
 
-    private static Button button(String text, FontAwesome icon, String tooltip, Runnable action)
+    private static Button button(String text, String tooltip, Runnable action)
     {
         Button button = new Button(text);
-        button.setGraphic(new IconNode(icon));
         button.setOnAction(event -> action.run());
 
         if(tooltip != null)
@@ -441,17 +444,18 @@ public class AliasSheetEditor extends BorderPane
     {
         if(mConflictBanner == null)
         {
+            //Same warning icon style as the playlist editor's alias table error column, on a light amber tint
             IconNode warning = new IconNode(FontAwesome.EXCLAMATION_TRIANGLE);
-            warning.setFill(javafx.scene.paint.Color.web("#5C4300"));
+            warning.setIconSize(16);
+            warning.setFill(javafx.scene.paint.Color.web("#F0AD4E"));
             mConflictLabel = new Label();
             mConflictLabel.setWrapText(true);
-            mConflictLabel.setStyle("-fx-text-fill: #5C4300;");
-            mConflictBanner = new HBox(10, warning, mConflictLabel);
+            mConflictBanner = new HBox(8, warning, mConflictLabel);
             mConflictBanner.setAlignment(Pos.CENTER_LEFT);
-            mConflictBanner.setPadding(new Insets(8, 12, 8, 12));
+            mConflictBanner.setPadding(new Insets(6, 10, 6, 10));
             VBox.setMargin(mConflictBanner, new Insets(0, 10, 8, 10));
-            mConflictBanner.setStyle("-fx-background-color: #FFF4DB; -fx-border-color: #E8C26A; " +
-                "-fx-border-radius: 6; -fx-background-radius: 6;");
+            mConflictBanner.setStyle("-fx-background-color: rgba(240,173,78,0.18); " +
+                "-fx-border-color: rgba(240,173,78,0.75); -fx-border-radius: 3; -fx-background-radius: 3;");
             mConflictBanner.setVisible(false);
             mConflictBanner.setManaged(false);
         }
@@ -467,11 +471,12 @@ public class AliasSheetEditor extends BorderPane
         mCountLabel = new Label();
         mConsoleCountLabel = new Label();
         mConflictCountLabel = new Label();
-        mConflictCountLabel.setStyle("-fx-text-fill: #9A6700; -fx-font-weight: bold;");
+        IconNode conflictIcon = new IconNode(FontAwesome.EXCLAMATION_TRIANGLE);
+        conflictIcon.setFill(javafx.scene.paint.Color.web("#F0AD4E"));
+        mConflictCountLabel.setGraphic(conflictIcon);
         mStatusLabel = new Label();
-        mStatusLabel.setStyle("-fx-font-style: italic;");
         Label hint = new Label(HINT);
-        hint.setStyle("-fx-opacity: 0.7;");
+        hint.setDisable(true);
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
@@ -492,7 +497,7 @@ public class AliasSheetEditor extends BorderPane
             mTableView.setEditable(true);
             mTableView.getSelectionModel().setCellSelectionEnabled(true);
             mTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
-            mTableView.setPlaceholder(new Label("No aliases.  Click Add row or paste rows from a spreadsheet."));
+            mTableView.setPlaceholder(new Label("No aliases.  Click Add Row or paste rows from a spreadsheet."));
 
             for(AliasSheetColumn column: AliasSheetColumn.values())
             {
@@ -552,13 +557,13 @@ public class AliasSheetEditor extends BorderPane
 
         switch(column)
         {
+            //Alias, group, color, icon, listen and record use the playlist editor alias table's column widths
             case ALIAS_LIST:
-            case GROUP:
-            case ICON:
                 tableColumn.setPrefWidth(110);
                 break;
             case NAME:
-                tableColumn.setPrefWidth(190);
+            case GROUP:
+                tableColumn.setPrefWidth(140);
                 break;
             case PROTOCOL:
                 tableColumn.setPrefWidth(90);
@@ -566,15 +571,6 @@ public class AliasSheetEditor extends BorderPane
             case TALKGROUP:
                 tableColumn.setPrefWidth(150);
                 tableColumn.setComparator(AliasSheetEditor::compareNumeric);
-                break;
-            case COLOUR:
-                tableColumn.setPrefWidth(100);
-                break;
-            case LISTEN:
-                tableColumn.setPrefWidth(110);
-                break;
-            case RECORD:
-                tableColumn.setPrefWidth(65);
                 break;
             case STREAM:
                 tableColumn.setPrefWidth(140);
@@ -651,14 +647,14 @@ public class AliasSheetEditor extends BorderPane
         paste.setOnAction(event -> paste());
         MenuItem pasteRadioReference = new MenuItem("Paste from RadioReference…");
         pasteRadioReference.setOnAction(event -> pasteFromRadioReference());
-        MenuItem fillDown = new MenuItem("Fill down");
+        MenuItem fillDown = new MenuItem("Fill Down");
         fillDown.setAccelerator(FILL_DOWN);
         fillDown.setOnAction(event -> fillDown());
-        MenuItem clear = new MenuItem("Clear cells");
+        MenuItem clear = new MenuItem("Clear Cells");
         clear.setOnAction(event -> clearSelection());
-        MenuItem addRow = new MenuItem("Add row");
+        MenuItem addRow = new MenuItem("Add Row");
         addRow.setOnAction(event -> addRow());
-        MenuItem delete = new MenuItem("Delete rows…");
+        MenuItem delete = new MenuItem("Delete Rows…");
         delete.setOnAction(event -> deleteSelectedRows());
         MenuItem open = new MenuItem("Open in alias editor…");
         open.setOnAction(event -> {
@@ -669,7 +665,7 @@ public class AliasSheetEditor extends BorderPane
                 openAliasEditor(selected.getFirst());
             }
         });
-        Menu console = new Menu("Console group");
+        Menu console = new Menu("Console Group");
         console.setOnShowing(event -> populateConsoleMenu(console.getItems()));
         populateConsoleMenu(console.getItems());
         console.setDisable(mModel.getConsoleLayoutManager() == null);
@@ -1466,6 +1462,14 @@ public class AliasSheetEditor extends BorderPane
     }
 
     /**
+     * Icon model for the alias icons
+     */
+    public IconModel getIconModel()
+    {
+        return mPlaylistManager.getIconModel();
+    }
+
+    /**
      * Image for the named icon, or null.
      */
     public Image getIconImage(String iconName)
@@ -1697,6 +1701,8 @@ public class AliasSheetEditor extends BorderPane
         mConsoleCountLabel.setText(onConsole + " on console");
         mConflictCountLabel.setText(conflicts.isEmpty() ? "" : conflicts.size() + " conflict" +
             (conflicts.size() == 1 ? "" : "s"));
+        mConflictCountLabel.setVisible(!conflicts.isEmpty());
+        mConflictCountLabel.setManaged(!conflicts.isEmpty());
 
         updateUndoButtons();
 

@@ -26,7 +26,6 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.gui.control.MaxLengthUnaryOperator;
 import io.github.dsheirer.gui.playlist.Editor;
 import io.github.dsheirer.gui.playlist.IAliasListRefreshListener;
-import io.github.dsheirer.icon.Icon;
 import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.preference.UserPreferences;
 import java.util.ArrayList;
@@ -59,7 +58,6 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.cell.PropertyValueFactory;
-import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
@@ -457,11 +455,11 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
 
             TableColumn<Alias, Boolean> recordColumn = new TableColumn("Record");
             recordColumn.setCellValueFactory(new PropertyValueFactory<>("recordable"));
-            recordColumn.setCellFactory(new IconCell(FontAwesome.SQUARE, Color.RED));
+            recordColumn.setCellFactory(new IconCell(AliasCellGraphics.RECORD_ICON, AliasCellGraphics.RECORD_COLOR));
 
             TableColumn<Alias, Boolean> streamColumn = new TableColumn("Stream");
             streamColumn.setCellValueFactory(new PropertyValueFactory<>("streamable"));
-            streamColumn.setCellFactory(new IconCell(FontAwesome.VOLUME_UP, Color.DARKBLUE));
+            streamColumn.setCellFactory(new IconCell(AliasCellGraphics.STREAM_ICON, AliasCellGraphics.STREAM_COLOR));
 
             TableColumn<Alias, Integer> idsColumn = new TableColumn("IDs");
             idsColumn.setCellValueFactory(new IdentifierCountCell());
@@ -709,9 +707,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         @Override
         public TableCell<Alias, Integer> call(TableColumn<Alias, Integer> param)
         {
-            final Rectangle rectangle = new Rectangle(20, 20);
-            rectangle.setArcHeight(10);
-            rectangle.setArcWidth(10);
+            final Rectangle rectangle = AliasCellGraphics.createColorSwatch();
 
             TableCell<Alias, Integer> tableCell = new TableCell<>()
             {
@@ -764,9 +760,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         @Override
         public TableCell<Alias, Boolean> call(TableColumn<Alias, Boolean> param)
         {
-            final IconNode iconNode = new IconNode(mIconCode);
-            iconNode.setIconSize(20);
-            iconNode.setFill(mColor);
+            final IconNode iconNode = AliasCellGraphics.createBooleanIcon(mIconCode, mColor);
 
             TableCell<Alias, Boolean> tableCell = new TableCell<>()
             {
@@ -853,29 +847,10 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
                         setText(null);
                         setGraphic(null);
                     }
-                    else if(item == io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR)
-                    {
-                        setText("Mute");
-                        final IconNode iconNode = new IconNode(FontAwesome.VOLUME_OFF);
-                        iconNode.setIconSize(20);
-                        iconNode.setFill(Color.RED);
-                        setGraphic(iconNode);
-                    }
-                    else if(item == io.github.dsheirer.alias.id.priority.Priority.DEFAULT_PRIORITY)
-                    {
-                        setText("Default");
-                        final IconNode iconNode = new IconNode(FontAwesome.VOLUME_UP);
-                        iconNode.setIconSize(20);
-                        iconNode.setFill(Color.GREEN);
-                        setGraphic(iconNode);
-                    }
                     else
                     {
-                        setText(item.toString());
-                        final IconNode iconNode = new IconNode(FontAwesome.VOLUME_UP);
-                        iconNode.setIconSize(20);
-                        iconNode.setFill(Color.GREEN);
-                        setGraphic(iconNode);
+                        setText(AliasCellGraphics.getPriorityText(item));
+                        setGraphic(AliasCellGraphics.createPriorityGraphic(item));
                     }
                 }
             };
@@ -909,16 +884,8 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
 
                             if(alias != null)
                             {
-                                Icon icon = mPlaylistManager.getIconModel().getIcon(alias.getIconName());
-
-                                if(icon != null && icon.getFxImage() != null)
-                                {
-                                    setGraphic(new ImageView(icon.getFxImage()));
-                                }
-                                else
-                                {
-                                    setGraphic(null);
-                                }
+                                setGraphic(AliasCellGraphics.createIconGraphic(mPlaylistManager.getIconModel(),
+                                    alias.getIconName()));
                             }
                         }
                     }

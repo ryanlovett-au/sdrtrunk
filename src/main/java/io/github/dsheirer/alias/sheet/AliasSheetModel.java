@@ -1962,7 +1962,7 @@ public class AliasSheetModel
 
     private static String invalidColourMessage(String value)
     {
-        return "Colour '" + value + "' is not valid - use #RRGGBB (e.g. #FF8A3D)";
+        return "Color '" + value + "' is not valid - use #RRGGBB (e.g. #FF8A3D)";
     }
 
     private static String invalidListenMessage(String value)

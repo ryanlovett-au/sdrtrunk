@@ -24,6 +24,7 @@ import io.github.dsheirer.alias.sheet.AliasSheetColumn;
 import io.github.dsheirer.alias.sheet.AliasSheetModel;
 import io.github.dsheirer.alias.sheet.AliasSheetValues;
 import io.github.dsheirer.alias.sheet.TalkgroupConflict;
+import io.github.dsheirer.gui.playlist.alias.AliasCellGraphics;
 import io.github.dsheirer.gui.playlist.alias.ColorUtil;
 import java.util.List;
 import java.util.Locale;
@@ -32,7 +33,6 @@ import java.util.stream.Collectors;
 import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
-import javafx.scene.control.CheckBox;
 import javafx.scene.control.ColorPicker;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContentDisplay;
@@ -51,11 +51,11 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.paint.Color;
-import javafx.scene.shape.Rectangle;
 
 /**
- * Alias sheet table cell.  Displays the cell text with column specific decorations (colour swatch, icon, record check
- * box, 'More...' link for complex aliases), invalid (red) and conflict (amber) highlighting with a tooltip, and
+ * Alias sheet table cell.  Displays the cell text, with the color, icon, listen, record and stream values shown as in
+ * the playlist editor's alias table (see AliasCellGraphics), a 'More...' link for complex aliases, invalid (red) and
+ * conflict (amber) highlighting with a tooltip, and
  * provides the in-place editor for the column: a text field, a choice box, or a colour picker.
  *
  * Edits are committed when editing ends for any reason other than Escape (Enter, Tab, clicking another cell, or focus
@@ -64,11 +64,12 @@ import javafx.scene.shape.Rectangle;
  */
 public class AliasSheetCell extends TableCell<Alias,String>
 {
-    private static final String INVALID_COLOR = "rgba(220,53,69,0.30)";
-    private static final String INVALID_BORDER = "#DC3545";
-    private static final String CONFLICT_COLOR = "rgba(232,170,40,0.35)";
-    private static final String CONFLICT_BORDER = "#E8AA28";
-    private static final String MUTED_TEXT = "-fx-opacity: 0.6;";
+    //Subtle tints over the (Modena) row background, and a matching inner border on selected cells so that the
+    //selection colour and the text remain readable
+    private static final String INVALID_COLOR = "rgba(217,83,79,0.16)";
+    private static final String INVALID_BORDER = "#D9534F";
+    private static final String CONFLICT_COLOR = "rgba(240,173,78,0.24)";
+    private static final String CONFLICT_BORDER = "#F0AD4E";
 
     private final AliasSheetEditor mEditor;
     private final AliasSheetColumn mColumn;
@@ -140,6 +141,11 @@ public class AliasSheetCell extends TableCell<Alias,String>
                 else if(mColumn == AliasSheetColumn.STREAM)
                 {
                     mEditor.editStreams(alias);
+                }
+                else if(mColumn == AliasSheetColumn.RECORD && getModel().getError(alias, mColumn) == null)
+                {
+                    mEditor.commitCell(alias, AliasSheetColumn.RECORD,
+                        AliasSheetValues.formatRecord(!alias.isRecordable()));
                 }
             }
         });
@@ -215,57 +221,56 @@ public class AliasSheetCell extends TableCell<Alias,String>
         String error = getModel().getError(alias, mColumn);
         boolean editable = getModel().isEditable(alias, mColumn);
 
+        //Color, icon, listen, record and stream are displayed as in the playlist editor's alias table.  An invalid
+        //(unapplied) value is shown as text so that it can be corrected.
         switch(mColumn)
         {
             case COLOUR:
-                if(error == null && alias.getColor() != 0)
+                if(error == null)
                 {
-                    Rectangle swatch = new Rectangle(14, 14);
-                    swatch.setArcWidth(4);
-                    swatch.setArcHeight(4);
-                    swatch.setFill(ColorUtil.fromInteger(alias.getColor()));
-                    swatch.setStroke(Color.gray(0.5, 0.5));
-                    graphic = swatch;
+                    graphic = AliasCellGraphics.createColorSwatch(alias.getColor());
+                    text = null;
+                    setAlignment(Pos.CENTER);
+
+                    if(alias.getColor() != 0)
+                    {
+                        setTooltip(new Tooltip(item));
+                    }
                 }
                 break;
             case ICON:
                 if(error == null)
                 {
-                    Image image = mEditor.getIconImage(alias.getIconName());
-
-                    if(image != null)
-                    {
-                        ImageView imageView = new ImageView(image);
-                        imageView.setPreserveRatio(true);
-                        imageView.setFitHeight(16);
-                        graphic = imageView;
-                    }
+                    graphic = AliasCellGraphics.createIconGraphic(mEditor.getIconModel(), alias.getIconName());
+                    text = null;
+                    setAlignment(Pos.CENTER);
+                }
+                break;
+            case LISTEN:
+                if(error == null)
+                {
+                    int priority = alias.getPlaybackPriority();
+                    text = AliasCellGraphics.getPriorityText(priority);
+                    graphic = AliasCellGraphics.createPriorityGraphic(priority);
                 }
                 break;
             case RECORD:
                 if(error == null)
                 {
-                    CheckBox checkBox = new CheckBox();
-                    checkBox.setSelected(alias.isRecordable());
-                    checkBox.setOnAction(event -> mEditor.commitCell(alias, AliasSheetColumn.RECORD,
-                        AliasSheetValues.formatRecord(checkBox.isSelected())));
-                    graphic = checkBox;
+                    graphic = AliasCellGraphics.createBooleanIcon(AliasCellGraphics.RECORD_ICON,
+                        AliasCellGraphics.RECORD_COLOR);
+                    graphic.setVisible(alias.isRecordable());
                     text = null;
                     setAlignment(Pos.CENTER);
+                    setTooltip(new Tooltip((alias.isRecordable() ? "Recorded" : "Not recorded") +
+                        " - double-click or press Enter to change"));
                 }
                 break;
             case STREAM:
-                if(text.isEmpty())
+                if(error == null && !text.isEmpty())
                 {
-                    text = "—";
-                    mTextStyle = MUTED_TEXT;
-                }
-                break;
-            case CONSOLE_GROUP:
-                if(text.isEmpty())
-                {
-                    text = AliasSheetValues.NOT_ON_CONSOLE;
-                    mTextStyle = MUTED_TEXT;
+                    graphic = AliasCellGraphics.createBooleanIcon(AliasCellGraphics.STREAM_ICON,
+                        AliasCellGraphics.STREAM_COLOR);
                 }
                 break;
             case TALKGROUP:
@@ -328,7 +333,8 @@ public class AliasSheetCell extends TableCell<Alias,String>
         }
         else if(isSelected())
         {
-            setStyle(mTextStyle + "-fx-border-color: " + mHighlightBorder + "; -fx-border-width: 0 0 3 0;");
+            setStyle(mTextStyle + "-fx-border-color: " + mHighlightBorder + "; -fx-border-width: 2; " +
+                "-fx-border-insets: 1;");
         }
         else
         {

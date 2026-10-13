@@ -93,7 +93,7 @@ public class AliasSheetCsvTest
         sourceModel.editCell(fire, AliasSheetColumn.CONSOLE_GROUP, "Fire & Rescue");
 
         String csv = AliasSheetCsv.export(sourceModel, List.of(fire, rail));
-        assertTrue(csv.startsWith("Alias list,Group,Name,Protocol,Talkgroup,Colour,Icon,Listen,Record,Stream," +
+        assertTrue(csv.startsWith("Alias list,Group,Alias,Protocol,Talkgroup,Color,Icon,Listen,Record,Stream," +
             "Console group\r\n"));
 
         AliasModel target = new AliasModel();
