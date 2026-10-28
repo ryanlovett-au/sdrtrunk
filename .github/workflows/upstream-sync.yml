@@ -48,7 +48,7 @@ jobs:
           if [ -n "$existing" ]; then
             echo "Pull request #$existing is already open for upstream changes"
           else
-            gh pr create --repo "${{ github.repository }}" --base console-ui --head dsheirer:master \
+            gh pr create --repo "${{ github.repository }}" --base console-ui --head dsheirer:master --no-maintainer-edit \
               --title "Merge upstream sdrtrunk changes" \
               --body "Upstream [dsheirer/sdrtrunk](https://github.com/dsheirer/sdrtrunk) master has $COUNT commit(s) that are not in console-ui. Review the changes, resolve any conflicts, run the tests and merge."
           fi
