@@ -1,0 +1,54 @@
+# Watches the upstream sdrtrunk repository (dsheirer/sdrtrunk) and, when its master branch has commits that are not
+# yet merged into console-ui, opens a pull request from upstream master into console-ui for review.  The pull request
+# is opened directly from the upstream repository, so it updates itself as upstream changes and nothing is pushed
+# here.  Merging (and resolving any conflicts) remains a manual step.
+
+name: Upstream Sync
+
+on:
+  schedule:
+    # Daily 15:30 UTC
+    - cron: '30 15 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: console-ui
+          fetch-depth: 0
+
+      - name: Check for upstream changes
+        id: check
+        run: |
+          git remote add upstream https://github.com/dsheirer/sdrtrunk.git
+          git fetch --quiet upstream master
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "console-ui already contains upstream master"
+            echo "changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changes=true" >> "$GITHUB_OUTPUT"
+            echo "count=$(git rev-list --count HEAD..upstream/master)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open a pull request for upstream changes
+        if: steps.check.outputs.changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COUNT: ${{ steps.check.outputs.count }}
+        run: |
+          existing=$(gh api "repos/${{ github.repository }}/pulls?state=open&base=console-ui&head=dsheirer:master" --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            echo "Pull request #$existing is already open for upstream changes"
+          else
+            gh pr create --repo "${{ github.repository }}" --base console-ui --head dsheirer:master \
+              --title "Merge upstream sdrtrunk changes" \
+              --body "Upstream [dsheirer/sdrtrunk](https://github.com/dsheirer/sdrtrunk) master has $COUNT commit(s) that are not in console-ui. Review the changes, resolve any conflicts, run the tests and merge."
+          fi

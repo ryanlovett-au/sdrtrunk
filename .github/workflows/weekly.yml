@@ -1,0 +1,84 @@
+# Weekly release of this modified version of sdrtrunk (radio console).  Builds the Linux, macOS and Windows release
+# packages the same way as the upstream nightly release and publishes them to a rolling 'weekly' pre-release.  The
+# scheduled run is skipped when nothing has changed since the previous weekly release.  Can also be run manually.
+
+name: Weekly Release
+
+on:
+  schedule:
+    # Sundays 16:30 UTC (Monday 03:00 in Adelaide during daylight saving)
+    - cron: '30 16 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  weekly:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for changes since the last weekly release
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && git rev-parse -q --verify "refs/tags/weekly" > /dev/null &&
+             [ "$(git rev-parse 'weekly^{commit}')" = "$(git rev-parse HEAD)" ]; then
+            echo "No changes since the last weekly release - skipping"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 27
+        if: steps.changes.outputs.build == 'true'
+        uses: actions/setup-java@v3
+        with:
+          java-version: '27'
+          distribution: 'liberica'
+          java-package: 'jdk+fx'
+
+      - name: Run tests
+        if: steps.changes.outputs.build == 'true'
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: test
+
+      - name: Build Linux and Mac releases with Gradle
+        if: steps.changes.outputs.build == 'true'
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: runtimeZipOthers -PprojectVersion=weekly
+
+      - name: Build Windows release with Gradle
+        if: steps.changes.outputs.build == 'true'
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: runtimeZipWindows -PprojectVersion=weekly
+
+      - name: Create Build Info file
+        if: steps.changes.outputs.build == 'true'
+        run: |
+          echo -e "ref: $GITHUB_REF \ncommit: $GITHUB_SHA\nbuild: $(date +"%Y-%m-%dT%H:%M:%SZ")" > build/image/build_info.txt
+
+      - name: Move the weekly tag to this commit
+        if: steps.changes.outputs.build == 'true'
+        run: |
+          git tag -f weekly
+          git push -f origin refs/tags/weekly
+
+      - name: Add build artifacts to weekly release
+        if: steps.changes.outputs.build == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: weekly
+          name: Weekly
+          prerelease: true
+          files: |
+            build/image/*.zip
+            build/image/build_info.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
