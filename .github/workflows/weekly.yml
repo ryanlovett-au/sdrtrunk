@@ -78,6 +78,7 @@ jobs:
           tag_name: weekly
           name: Weekly
           prerelease: true
+          body_path: .github/release-notes/weekly.md
           files: |
             build/image/*.zip
             build/image/build_info.txt
