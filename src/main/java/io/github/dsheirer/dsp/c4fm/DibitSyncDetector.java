@@ -1,7 +1,6 @@
-package io.github.dsheirer.bits;
+package io.github.dsheirer.dsp.c4fm;
 
 import io.github.dsheirer.dsp.symbol.Dibit;
-import io.github.dsheirer.module.decode.nxdn.layer1.sync.ReferenceSyncWaveform;
 import java.util.Map;
 import java.util.TreeMap;
 import org.apache.commons.math3.analysis.interpolation.SplineInterpolator;
@@ -15,9 +14,9 @@ public class DibitSyncDetector
     private final long mPattern;
     private final long mMask;
     private final int mDibitLength;
-    private Dibit[] mDibits;
-    private float[] mSymbols;
-    private final Map<Integer,ReferenceSyncWaveform> mReferenceWaveformMap = new TreeMap<>();
+    private Dibit[] mPatternDibits;
+    private float[] mPatternSymbols;
+    private final Map<Integer, ReferenceSyncWaveform> mReferenceWaveformMap = new TreeMap<>();
 
     /*
      * Constructs an instance.
@@ -70,28 +69,28 @@ public class DibitSyncDetector
      * Sync pattern as an array of dibits.
      * @return dibit array.
      */
-    public Dibit[] getDibits()
+    public Dibit[] getPatternDibits()
     {
-        if(mDibits == null)
+        if(mPatternDibits == null)
         {
-            mDibits = toDibits(mPattern, mDibitLength);
+            mPatternDibits = toDibits(mPattern, mDibitLength);
         }
 
-        return mDibits;
+        return mPatternDibits;
     }
 
     /**
      * Sync pattern as an array of soft symbols
      * @return symbols array in radians.
      */
-    public float[] getSymbols()
+    public float[] getPatternSymbols()
     {
-        if(mSymbols == null)
+        if(mPatternSymbols == null)
         {
-            mSymbols = toSymbols(getDibits());
+            mPatternSymbols = toSymbols(getPatternDibits());
         }
 
-        return mSymbols;
+        return mPatternSymbols;
     }
 
     /**
@@ -158,7 +157,7 @@ public class DibitSyncDetector
             return mReferenceWaveformMap.get(key);
         }
 
-        float[] symbols = getSymbols();
+        float[] symbols = getPatternSymbols();
         int sampleCount = (int)Math.ceil(samplesPerSymbol * (symbols.length - 1)) + 1;
         float[] samples = new float[sampleCount];
         double sampleInterval = 1.0 / samplesPerSymbol;

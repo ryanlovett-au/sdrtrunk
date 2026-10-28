@@ -28,11 +28,9 @@ import io.github.dsheirer.dsp.symbol.DibitToByteBufferAssembler;
 import io.github.dsheirer.edac.bch.BCH_63_16_23_P25;
 import io.github.dsheirer.gui.viewer.sync.FMSyncResultsViewer;
 import io.github.dsheirer.gui.viewer.sync.ISyncResultsListener;
-import io.github.dsheirer.gui.viewer.sync.SyncResultsViewer;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.module.decode.p25.phase1.sync.P25P1SoftSyncDetector;
 import io.github.dsheirer.module.decode.p25.phase1.sync.P25P1SoftSyncDetectorFactory;
-import io.github.dsheirer.module.decode.p25.phase1.sync.P25P1SyncDetector;
 import io.github.dsheirer.sample.Listener;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -278,7 +276,7 @@ public class P25P1DemodulatorC4FM
                             symbolsSinceLastSync = 0;
 
                             //Overwrite the sync symbols in the symbol delay line to eliminate any decoding errors
-                            for(Dibit syncSymbol: mSyncDetector.getDibits())
+                            for(Dibit syncSymbol: mSyncDetector.getPatternDibits())
                             {
                                 mSymbolDelayLine.insert(syncSymbol);
                             }
@@ -1004,7 +1002,7 @@ public class P25P1DemodulatorC4FM
                     softSymbol = 0.0f;
                 }
 
-                score += softSymbol * mSyncDetector.getSymbols()[x];
+                score += softSymbol * mSyncDetector.getPatternSymbols()[x];
                 pointer += samplesPerSymbol;
                 bufferPointer = (int)Math.floor(pointer);
                 fractional = pointer - bufferPointer;
@@ -1072,7 +1070,7 @@ public class P25P1DemodulatorC4FM
         {
             double resampleStart = offset + additionalOffset + timingCorrection;
             int resampleStartIntegral = (int)Math.floor(resampleStart);
-            float symbol = mSyncDetector.getSymbols()[23];
+            float symbol = mSyncDetector.getPatternSymbols()[23];
             float resampledSoftSymbol = LinearInterpolator.calculate(mBuffer[resampleStartIntegral],
                     mBuffer[resampleStartIntegral + 1], resampleStart - resampleStartIntegral);
             resampledSoftSymbol = (resampledSoftSymbol + mPll) * mGain;
@@ -1081,7 +1079,7 @@ public class P25P1DemodulatorC4FM
             float balanceMinus3Symbols = resampledSoftSymbol - symbol;
             float gainAccumulator = Math.abs(symbol) - Math.abs(resampledSoftSymbol);
             Dibit resampledDibit = toSymbol(resampledSoftSymbol);
-            int bitErrorCount = mSyncDetector.getDibits()[23].getBitErrorFrom(resampledDibit);
+            int bitErrorCount = mSyncDetector.getPatternDibits()[23].getBitErrorFrom(resampledDibit);
 
             resampleStart -= (23 * mSamplesPerSymbol);
             resampleStartIntegral = (int)Math.floor(resampleStart);
@@ -1090,12 +1088,12 @@ public class P25P1DemodulatorC4FM
             {
                 if(resampleStartIntegral >= 0)
                 {
-                    symbol = mSyncDetector.getSymbols()[x];
+                    symbol = mSyncDetector.getPatternSymbols()[x];
                     resampledSoftSymbol = LinearInterpolator.calculate(mBuffer[resampleStartIntegral],
                             mBuffer[resampleStartIntegral + 1], resampleStart - resampleStartIntegral);
                     resampledSoftSymbol = (resampledSoftSymbol + mPll) * mGain;
                     resampledDibit = toSymbol(resampledSoftSymbol);
-                    bitErrorCount += mSyncDetector.getDibits()[x].getBitErrorFrom(resampledDibit);
+                    bitErrorCount += mSyncDetector.getPatternDibits()[x].getBitErrorFrom(resampledDibit);
 
                     if(symbol > 0)
                     {

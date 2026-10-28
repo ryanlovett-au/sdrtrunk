@@ -790,7 +790,7 @@ public class NXDNDecoderState extends DecoderState implements INetworkSiteInfoPr
         if(message instanceof GPS gps)
         {
             PlottableDecodeEvent plottableEvent = PlottableDecodeEvent.plottableBuilder(DecodeEventType.GPS, gps.getTimestamp())
-                    .identifiers(new IdentifierCollection(message.getPacketSequence().getHeader().getIdentifiers()))
+                    .identifiers(getMutableIdentifierCollection(message.getPacketSequence().getHeader().getIdentifiers()))
                     .channel(getCurrentChannel())
                     .details(gps.getLocationFormatted() + " HDG: " + gps.getHeading() + " SPD:" + gps.getSpeed() +
                             " ELE:" + gps.getElevation())

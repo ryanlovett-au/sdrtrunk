@@ -38,7 +38,7 @@ public class NXDNSoftSyncDetectorScalar extends NXDNSoftSyncDetector
         for(int x = 0; x < getDibitLength(); x++)
         {
             symbol = mSymbols[mSymbolPointer + x];
-            score += getSymbols()[x] * symbol;
+            score += getPatternSymbols()[x] * symbol;
         }
 
         return score;

@@ -35,7 +35,7 @@ public class NXDNSoftSyncDetectorVector512 extends NXDNSoftSyncDetector
 
     public NXDNSoftSyncDetectorVector512()
     {
-        SYNC_EXTENDED = Arrays.copyOf(getSymbols(), 16);;
+        SYNC_EXTENDED = Arrays.copyOf(getPatternSymbols(), 16);;
     }
 
     /**
