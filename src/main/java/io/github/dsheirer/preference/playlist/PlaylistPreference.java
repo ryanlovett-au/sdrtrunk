@@ -35,6 +35,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.prefs.Preferences;
 
@@ -178,6 +179,48 @@ public class PlaylistPreference extends Preference
         {
             String rawList = Joiner.on(",").join(playlistPaths);
             mPreferences.put(PREFERENCE_KEY_PLAYLIST_LIST, rawList);
+        }
+    }
+
+    /**
+     * Adds the playlists to the list of known playlists (when not already listed) and notifies listeners so that
+     * playlist views can show the added playlists.
+     * @param playlistPaths to add
+     */
+    public void addToPlaylistList(Collection<Path> playlistPaths)
+    {
+        if(playlistPaths == null || playlistPaths.isEmpty())
+        {
+            return;
+        }
+
+        List<Path> playlists = getPlaylistList();
+        boolean added = false;
+
+        for(Path path: playlistPaths)
+        {
+            boolean listed = false;
+
+            for(Path existing: playlists)
+            {
+                if(existing.toAbsolutePath().normalize().equals(path.toAbsolutePath().normalize()))
+                {
+                    listed = true;
+                    break;
+                }
+            }
+
+            if(!listed)
+            {
+                playlists.add(path);
+                added = true;
+            }
+        }
+
+        if(added)
+        {
+            setPlaylistList(playlists);
+            notifyPreferenceUpdated();
         }
     }
 

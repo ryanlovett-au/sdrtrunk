@@ -39,6 +39,8 @@ import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.ApplicationWindowRegistry;
 import io.github.dsheirer.gui.DirectoryOpener;
+import io.github.dsheirer.gui.configuration.ExportConfigurationRequest;
+import io.github.dsheirer.gui.configuration.ImportConfigurationRequest;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.playlist.ViewPlaylistRequest;
 import io.github.dsheirer.gui.playlist.alias.sheet.ViewAliasSheetRequest;
@@ -480,7 +482,10 @@ public class ConsoleWindow implements ApplicationWindowRegistry.IKeepAliveWindow
         traditionalItem.setOnAction(event -> EventQueue.invokeLater(mApplicationWindowRegistry::showMainWindow));
         MenuItem exitItem = new MenuItem("E_xit");
         exitItem.setOnAction(event -> EventQueue.invokeLater(mApplicationWindowRegistry::exitApplication));
-        Menu fileMenu = new Menu("_File", null, traditionalItem, new SeparatorMenuItem(), exitItem);
+        Menu fileMenu = new Menu("_File", null, traditionalItem, new SeparatorMenuItem(),
+            requestItem("Export Configuration…", FontAwesome.UPLOAD, ExportConfigurationRequest::new),
+            requestItem("Import Configuration…", FontAwesome.DOWNLOAD, ImportConfigurationRequest::new),
+            new SeparatorMenuItem(), exitItem);
 
         //View: the same application windows and folders, labels, order and icons as the main window's View menu
         //(without the Radio Console, which is this window, and the main window's tuners and display options)

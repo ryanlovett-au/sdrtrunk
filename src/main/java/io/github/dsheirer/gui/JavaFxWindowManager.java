@@ -26,6 +26,11 @@ import io.github.dsheirer.controller.channel.map.ChannelMap;
 import io.github.dsheirer.controller.channel.map.ChannelRange;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.console.ConsoleWindow;
+import io.github.dsheirer.configuration.transfer.ConfigurationTransferService;
+import io.github.dsheirer.gui.configuration.ExportConfigurationDialog;
+import io.github.dsheirer.gui.configuration.ExportConfigurationRequest;
+import io.github.dsheirer.gui.configuration.ImportConfigurationDialog;
+import io.github.dsheirer.gui.configuration.ImportConfigurationRequest;
 import io.github.dsheirer.gui.console.ViewConsoleRequest;
 import io.github.dsheirer.gui.icon.IconManager;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
@@ -56,6 +61,7 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import javafx.scene.Scene;
+import javafx.scene.control.Dialog;
 import javafx.stage.Stage;
 import jiconfont.javafx.IconFontFX;
 import org.slf4j.Logger;
@@ -104,6 +110,8 @@ public class JavaFxWindowManager extends Application
     private ApplicationWindowRegistry mApplicationWindowRegistry;
     private ConsoleActivityRouter mConsoleActivityRouter;
     private ConsoleWindow mConsoleWindow;
+    private ExportConfigurationDialog mExportConfigurationDialog;
+    private ImportConfigurationDialog mImportConfigurationDialog;
 
     /**
      * Constructs an instance.  Note: this constructor is used for Swing applications.
@@ -545,10 +553,84 @@ public class JavaFxWindowManager extends Application
     }
 
     /**
+     * Configuration export/import service for the running application.
+     */
+    private ConfigurationTransferService createConfigurationTransferService()
+    {
+        return new ConfigurationTransferService(mPlaylistManager, mUserPreferences,
+            mTunerManager.getTunerConfigurationManager());
+    }
+
+    /**
+     * Process an export configuration request: shows the export dialog (or brings an open export dialog to the
+     * front).
+     */
+    @Subscribe
+    public void process(final ExportConfigurationRequest request)
+    {
+        execute(() -> {
+            try
+            {
+                if(mExportConfigurationDialog != null && mExportConfigurationDialog.isShowing())
+                {
+                    restoreDialog(mExportConfigurationDialog);
+                    return;
+                }
+
+                mExportConfigurationDialog = new ExportConfigurationDialog(createConfigurationTransferService());
+                mExportConfigurationDialog.show();
+            }
+            catch(Throwable t)
+            {
+                mLog.error("Error showing the export configuration dialog", t);
+            }
+        });
+    }
+
+    /**
+     * Process an import configuration request: shows the import dialog and prompts for the configuration file (or
+     * brings an open import dialog to the front).
+     */
+    @Subscribe
+    public void process(final ImportConfigurationRequest request)
+    {
+        execute(() -> {
+            try
+            {
+                if(mImportConfigurationDialog != null && mImportConfigurationDialog.isShowing())
+                {
+                    restoreDialog(mImportConfigurationDialog);
+                    return;
+                }
+
+                mImportConfigurationDialog = new ImportConfigurationDialog(createConfigurationTransferService(),
+                    mPlaylistManager);
+                mImportConfigurationDialog.showAndChooseFile();
+            }
+            catch(Throwable t)
+            {
+                mLog.error("Error showing the import configuration dialog", t);
+            }
+        });
+    }
+
+    /**
+     * Brings the open dialog's window to the front.
+     */
+    private static void restoreDialog(Dialog<?> dialog)
+    {
+        if(dialog.getDialogPane().getScene() != null &&
+            dialog.getDialogPane().getScene().getWindow() instanceof Stage stage)
+        {
+            restoreStage(stage);
+        }
+    }
+
+    /**
      * Restores the stage to previous size and location.
      * @param stage to restore.
      */
-    private void restoreStage(Stage stage)
+    private static void restoreStage(Stage stage)
     {
         stage.setIconified(false);
         stage.show();

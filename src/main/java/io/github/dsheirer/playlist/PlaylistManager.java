@@ -83,6 +83,7 @@ public class PlaylistManager implements Listener<ChannelEvent>
     private AtomicBoolean mPlaylistSavePending = new AtomicBoolean();
     private ScheduledFuture<?> mPlaylistSaveFuture;
     private boolean mPlaylistLoading = false;
+    private volatile boolean mPlaylistSaveSuspended = false;
     private List<IAliasListRefreshListener> mAliasListRefreshListeners = new ArrayList<>();
 
     /**
@@ -335,6 +336,97 @@ public class PlaylistManager implements Listener<ChannelEvent>
         }
 
         init();
+    }
+
+    /**
+     * Saves any pending (scheduled) changes to the current playlist and to its console layout immediately, for example
+     * before the playlist files are copied for a configuration export.
+     */
+    public void flushPendingSaves()
+    {
+        saveNow();
+        mConsoleLayoutManager.saveNow();
+    }
+
+    /**
+     * Replaces playlist files on disk and then (re)loads the active playlist, for example when a configuration import
+     * replaces the current playlist and/or its console layout file.
+     *
+     * Pending changes to the current playlist and console layout are saved first.  While the update runs, and until
+     * the active playlist is reloaded, the current (in-memory) playlist and console layout are not saved, so that they
+     * can't overwrite the replacement files.  The active playlist is then loaded from disk without saving the previous
+     * in-memory models over it.  The active playlist is reloaded even when the update fails.
+     *
+     * @param update that writes the playlist files
+     * @param activePlaylist to load after the update, for example the current playlist or an imported playlist.
+     * @throws IOException if the update fails or the active playlist can't be created.
+     */
+    public void replacePlaylistFiles(PlaylistFileUpdate update, Path activePlaylist) throws IOException
+    {
+        if(update == null || activePlaylist == null)
+        {
+            throw new IllegalArgumentException("Playlist file update and active playlist are required");
+        }
+
+        //Complete any pending playlist and console layout saves, then stop saving to the current files
+        saveNow();
+        mConsoleLayoutManager.detach();
+        mPlaylistSaveSuspended = true;
+
+        try
+        {
+            update.update();
+        }
+        finally
+        {
+            //Discard any changes that were scheduled for saving during the update
+            cancelPendingSave();
+            mPlaylistSaveSuspended = false;
+
+            mUserPreferences.getPlaylistPreference().setPlaylist(activePlaylist);
+
+            if(!Files.exists(activePlaylist))
+            {
+                createEmptyPlaylist(activePlaylist);
+            }
+
+            init();
+        }
+    }
+
+    /**
+     * Cancels a scheduled playlist save without saving.
+     */
+    private void cancelPendingSave()
+    {
+        if(mPlaylistSaveFuture != null)
+        {
+            try
+            {
+                mPlaylistSaveFuture.cancel(true);
+            }
+            catch(Exception e)
+            {
+                mLog.error("Error trying to cancel pending playlist save");
+            }
+
+            mPlaylistSaveFuture = null;
+        }
+
+        mPlaylistSavePending.set(false);
+    }
+
+    /**
+     * Writes playlist files while the playlist manager isn't saving the current playlist.
+     */
+    @FunctionalInterface
+    public interface PlaylistFileUpdate
+    {
+        /**
+         * Writes the playlist files.
+         * @throws IOException if the files can't be written
+         */
+        void update() throws IOException;
     }
 
     /**
@@ -667,7 +759,7 @@ public class PlaylistManager implements Listener<ChannelEvent>
      */
     public void schedulePlaylistSave()
     {
-        if(!mPlaylistLoading)
+        if(!mPlaylistLoading && !mPlaylistSaveSuspended)
         {
             if(mPlaylistSavePending.compareAndSet(false, true))
             {
@@ -684,7 +776,10 @@ public class PlaylistManager implements Listener<ChannelEvent>
         @Override
         public void run()
         {
-            save();
+            if(!mPlaylistSaveSuspended)
+            {
+                save();
+            }
 
             mPlaylistSaveFuture = null;
             mPlaylistSavePending.set(false);

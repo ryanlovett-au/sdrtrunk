@@ -42,8 +42,8 @@ public class RadioReferencePreference extends Preference
     public static final int INVALID_ID = -1;
     private Preferences mPreferences = Preferences.userNodeForPackage(RadioReferencePreference.class);
     private static final String STORE_CREDENTIALS = "store.credentials";
-    private static final String USER_NAME = "user.name";
-    private static final String PASSWORD = "user.authorization";
+    public static final String USER_NAME = "user.name";
+    public static final String PASSWORD = "user.authorization";
     private static final String SHOW_PASSWORD = "show.password";
     private static final String PREFERRED_COUNTRY_ID = "preferred.country";
     private static final String PREFERRED_STATE_ID = "preferred.state";

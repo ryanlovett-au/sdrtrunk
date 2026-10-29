@@ -557,6 +557,15 @@ public class PlaylistManagerEditor extends HBox
                 @Override
                 public void run()
                 {
+                    //Show playlists that were added to the playlist list elsewhere (e.g. configuration import)
+                    for(Path path: mUserPreferences.getPlaylistPreference().getPlaylistList())
+                    {
+                        if(!getPlaylistTableView().getItems().contains(path))
+                        {
+                            getPlaylistTableView().getItems().add(path);
+                        }
+                    }
+
                     getPlaylistTableView().refresh();
                 }
             });

@@ -103,6 +103,7 @@ public class ConsoleLayoutManager
     private ScheduledFuture<?> mSaveFuture;
     private ConsoleLayout mLayout = new ConsoleLayout();
     private Path mLayoutPath;
+    private long mDetachCount;
     private volatile AliasModel mAliasModel;
 
     /**
@@ -766,6 +767,39 @@ public class ConsoleLayoutManager
     }
 
     /**
+     * Saves any pending changes and then detaches the current layout file: later changes are not saved to any file
+     * until a layout file is loaded with load(Path).  Invoke before the layout file is replaced on disk (for example
+     * by a configuration import), so that the in-memory layout is never saved over the replacement file.
+     */
+    public void detach()
+    {
+        saveNow();
+
+        synchronized(mSaveFutureLock)
+        {
+            if(mSaveFuture != null)
+            {
+                mSaveFuture.cancel(false);
+                mSaveFuture = null;
+            }
+
+            mSavePending.set(false);
+        }
+
+        synchronized(this)
+        {
+            mLayoutPath = null;
+            mDetachCount++;
+        }
+
+        //Wait for any in-progress save to complete
+        synchronized(mSaveLock)
+        {
+            mLog.info("Console layout file was detached");
+        }
+    }
+
+    /**
      * Saves any pending changes in preparation for application shutdown.
      */
     public void shutdown()
@@ -781,12 +815,14 @@ public class ConsoleLayoutManager
     {
         ConsoleLayout snapshot;
         Path path;
+        long detachCount;
 
         //Capture the layout and layout file together so that a layout is never saved to another playlist's file
         synchronized(this)
         {
             snapshot = mLayout.copyOf();
             path = mLayoutPath;
+            detachCount = mDetachCount;
         }
 
         if(path == null)
@@ -797,6 +833,16 @@ public class ConsoleLayoutManager
 
         synchronized(mSaveLock)
         {
+            //Don't save a snapshot captured before the layout file was detached (it may since have been replaced)
+            synchronized(this)
+            {
+                if(detachCount != mDetachCount)
+                {
+                    mLog.info("Console layout save was skipped - the layout file was detached");
+                    return;
+                }
+            }
+
             Path temporary = path.resolveSibling(path.getFileName().toString() + TEMPORARY_FILE_SUFFIX);
 
             try

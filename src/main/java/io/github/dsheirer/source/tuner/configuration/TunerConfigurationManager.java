@@ -136,6 +136,67 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
     }
 
     /**
+     * Snapshot of the tuner configurations and disabled tuners for exporting to another computer.  Recording tuners
+     * are excluded since they refer to recording files on this computer.
+     * @return state snapshot (new lists that contain the current configuration instances).
+     */
+    public TunerConfigurationState getTransferableState()
+    {
+        TunerConfigurationState state = new TunerConfigurationState();
+
+        mLock.lock();
+
+        try
+        {
+            state.setDisabledTuners(new ArrayList<>(mDisabledTunerList));
+            state.setTunerConfigurations(new ArrayList<>(mTunerConfigurations));
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        return state.copyWithoutRecordingTuners();
+    }
+
+    /**
+     * Imports tuner configurations and disabled tuners (for example from another computer): configurations replace
+     * the configuration that has the same tuner type and unique ID (serial number), other configurations are added,
+     * and disabled tuners are added to the disabled tuner list.  The state is saved immediately.
+     *
+     * Note: a tuner that is currently in use keeps its current settings until it is re-discovered (unplugged and
+     * plugged back in, or the application is restarted).
+     *
+     * @param imported state to merge
+     * @return merge counts
+     */
+    public TunerConfigurationState.MergeResult importState(TunerConfigurationState imported)
+    {
+        TunerConfigurationState.MergeResult result;
+
+        mLock.lock();
+
+        try
+        {
+            TunerConfigurationState state = new TunerConfigurationState();
+            state.setDisabledTuners(new ArrayList<>(mDisabledTunerList));
+            state.setTunerConfigurations(new ArrayList<>(mTunerConfigurations));
+            result = state.merge(imported);
+            mDisabledTunerList.clear();
+            mDisabledTunerList.addAll(state.getDisabledTuners());
+            mTunerConfigurations.clear();
+            mTunerConfigurations.addAll(state.getTunerConfigurations());
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        save();
+        return result;
+    }
+
+    /**
      * Schedules a configurations save task.  Subsequent calls to this method will be ignored until the
      * save event occurs, thus limiting repetitive saving to a minimum.
      */

@@ -34,6 +34,8 @@ import io.github.dsheirer.controller.channel.ChannelAutoStartFrame;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.configuration.ExportConfigurationRequest;
+import io.github.dsheirer.gui.configuration.ImportConfigurationRequest;
 import io.github.dsheirer.gui.console.ViewConsoleRequest;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.playlist.ViewPlaylistRequest;
@@ -448,6 +450,19 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         JMenu fileMenu = new JMenu("File");
         menuBar.add(fileMenu);
+
+        JMenuItem exportConfigurationItem = new JMenuItem("Export Configuration…");
+        exportConfigurationItem.setIcon(new ThemedFontIcon(FontAwesome.UPLOAD, 12));
+        exportConfigurationItem.addActionListener(e -> MyEventBus.getGlobalEventBus()
+            .post(new ExportConfigurationRequest()));
+        fileMenu.add(exportConfigurationItem);
+
+        JMenuItem importConfigurationItem = new JMenuItem("Import Configuration…");
+        importConfigurationItem.setIcon(new ThemedFontIcon(FontAwesome.DOWNLOAD, 12));
+        importConfigurationItem.addActionListener(e -> MyEventBus.getGlobalEventBus()
+            .post(new ImportConfigurationRequest()));
+        fileMenu.add(importConfigurationItem);
+        fileMenu.add(new JSeparator(JSeparator.HORIZONTAL));
 
         JMenuItem processingStatusReportMenuItem = new JMenuItem("Processing Diagnostic Report");
         processingStatusReportMenuItem.addActionListener(e -> {

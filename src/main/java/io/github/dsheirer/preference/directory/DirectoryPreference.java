@@ -59,8 +59,8 @@ public class DirectoryPreference extends Preference
     private static final String PREFERENCE_KEY_DIRECTORY_RECORDING = "directory.recording";
     private static final String PREFERENCE_KEY_DIRECTORY_SCREEN_CAPTURE = "directory.screen.capture";
     private static final String PREFERENCE_KEY_DIRECTORY_STREAMING = "directory.streaming";
-    private static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_RECORDINGS = "directory.max.usage.recordings";
-    private static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_EVENT_LOGS = "directory.max.usage.event.logs";
+    public static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_RECORDINGS = "directory.max.usage.recordings";
+    public static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_EVENT_LOGS = "directory.max.usage.event.logs";
 
     private Path mDirectoryApplicationRoot;
     private Path mDirectoryApplicationLogs;

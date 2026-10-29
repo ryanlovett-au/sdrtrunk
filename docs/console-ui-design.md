@@ -313,6 +313,64 @@ P25 phase 2 720 bits per I-ISCH (2 per 4-timeslot superframe fragment); DMR 288 
 CRC setting); NXDN 384 bits per frame (a frame counts as valid when any of its messages is valid). Shown as "—" when
 unknown (no messages yet, or none for 3 seconds).
 
+## Configuration export and import
+
+Moves a whole setup to another computer: install the release there, File → Export Configuration… on the old computer,
+File → Import Configuration… on the new one, plug in the tuner. Both the main window and the console window have the
+items (`ExportConfigurationRequest` / `ImportConfigurationRequest`, handled by `JavaFxWindowManager`). The user selects
+what to export and, after the file is read and validated, what to import. Non-GUI logic is in
+`io.github.dsheirer.configuration.transfer`.
+
+**Bundle:** a single zip, default name `sdrtrunk-configuration-YYYY-MM-DD.zip`:
+
+| Entry | Content |
+|---|---|
+| `manifest.json` | `format` (`sdrtrunk-configuration`), `formatVersion` (1), `created` (ISO-8601), `applicationVersion` (jar `Implementation-Version`, when known), `currentPlaylist`, `playlists` (`name`, `current`, `consoleLayout`), `tuners`, `preferences` |
+| `playlists/<name>.xml` | playlist file (aliases, channels, streaming, channel maps) |
+| `playlists/<name>.console.json` | the playlist's console layout (groups, cards, spans, volume/mute/pan, console mode), when it exists |
+| `tuners/tuner_configuration.json` | `TunerConfigurationState`: tuner configurations (gain, PPM, sample rate, …, keyed by tuner type + serial) and disabled tuners |
+| `preferences/preferences.json` | `{ node path relative to /io/github/dsheirer → { key → string value } }` |
+
+Playlist names are sanitized (letters, digits, space and `-_.()+,`, no leading dot, `.xml`) and made unique
+(`default-2.xml`) when two playlists in different folders share a name. Recording tuners are not exported (they refer
+to local recording files).
+
+**Preferences whitelist** (node paths derived from the preference classes' packages): application (theme, scale,
+auto-start), playback (incl. audio output device name and channel count — console pan needs the stereo device),
+talkgroup format, duplicate call management, decode event, MP3, record, source (tuner channelizer and multi-frequency
+rotation), RadioReference selections without `user.name` / `user.authorization`, and from directory only
+`directory.max.usage.recordings` / `directory.max.usage.event.logs`. **Not included:** folder locations, JMBE library
+path, CPU (vector) calibration, JavaFX/Swing window positions, playlist preference paths, viewers, recent files, the
+main window's node, the RadioReference login, recordings and event logs. Values for other nodes or keys found in a
+bundle are ignored on import.
+
+**Export** saves pending playlist and console layout changes first (`PlaylistManager.flushPendingSaves()`), then
+reads the playlist files from disk, the in-memory tuner state (`TunerConfigurationManager.getTransferableState()`) and
+the whitelisted preferences. The zip is written to a temporary file and moved into place.
+
+**Import** reads the whole bundle first and rejects it when the manifest is missing or from a newer format version,
+an entry name is absolute or contains `..`/`\`/`:` (path traversal), an entry is not part of the format or not listed
+in the manifest, an entry is too large, or a playlist / layout / tuner / preferences file doesn't parse.
+
+- Playlists are written into the playlist folder (`DirectoryPreference.getDirectoryPlaylist()`) and added to the
+  playlist list. An existing `.xml` / `.console.json` is backed up as `<file>.pre-import-<yyyyMMdd_HHmmss>` and replaced
+  (an existing layout is moved aside when the bundle has no layout for that playlist; a stale `.lck` file is removed so
+  the playlist manager doesn't restore its `.backup` over the import).
+- When the current playlist is replaced, or the bundle's current playlist becomes active,
+  `PlaylistManager.replacePlaylistFiles()` saves pending changes, detaches the console layout file
+  (`ConsoleLayoutManager.detach()`: later saves of the old in-memory layout are dropped) and suspends playlist saves
+  while the files are written, then sets the playlist preference and reloads (`init()`) without saving the old models
+  over the imported files. The user is then offered to start auto-start channels.
+- Tuner settings merge (`TunerConfigurationManager.importState()`): a configuration replaces the one with the same
+  tuner type + serial, others are added, disabled tuners are merged, saved immediately. A tuner that is plugged in
+  picks the settings up after unplug/replug or restart.
+- Preferences are written into the whitelisted nodes; preference objects cache values, so they take effect after
+  sdrtrunk restarts.
+- A summary lists the imported playlists, the backups and the tuner/preference counts.
+
+Tests use temporary directories and an in-memory `Preferences` implementation (`InMemoryPreferences`) — never the
+real `~/SDRTrunk` or the user preferences store.
+
 ## Testing
 
 Use a live tuner (P25 via Airspy Mini), and record baseband with the tuner's Record button so the same traffic can
